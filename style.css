@@ -60,6 +60,8 @@ body.theme-light .primary-button,
 body.theme-light .secondary-button,
 body.theme-light .danger-button {
   color: #0f172a;
+  align-items: center;
+  justify-content: center;
 }
 
 body.theme-light .toast {
