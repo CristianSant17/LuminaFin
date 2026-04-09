@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>LuminaFin | Gestão Financeira Pessoal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
+  <script src="script.js" defer></script>
+</head>
+<body class="theme-light">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon"><i class="fa-solid fa-wallet"></i></div>
+        <div>
+          <h1>LuminaFin</h1>
+          <p>Controle financeiro completo</p>
+        </div>
+      </div>
+      <nav class="nav-menu" aria-label="Navegação principal" role="tablist">
+        <button class="nav-link active" role="tab" aria-selected="true" data-target="dashboard"><i class="fa-solid fa-house"></i> Dashboard</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="transactions"><i class="fa-solid fa-file-invoice-dollar"></i> Lançamentos</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="fixed"><i class="fa-solid fa-repeat"></i> Gastos</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="reports"><i class="fa-solid fa-chart-line"></i> Relatórios</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="admin"><i class="fa-solid fa-gear"></i> Administrativo</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="toggle-theme">
+          <span>Dark</span>
+          <label class="switch">
+            <input type="checkbox" id="themeToggle" aria-label="Alternar tema claro e escuro" />
+            <span class="slider"></span>
+          </label>
+          <span>Light</span>
+        </div>
+        <button class="secondary-button" id="backupButton"><i class="fa-solid fa-download"></i> Backup</button>
+        <button class="secondary-button" id="installAppButton" style="display: none;"><i class="fa-solid fa-download"></i> Instalar app </button>
+      </div>
+    </aside>
+    <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
+    <main class="content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="hamburger-button" id="menuToggleButton" aria-label="Abrir menu de navegação" aria-expanded="false" aria-controls="sidebar">
+            <span></span>
+            <span></span>
+            <span></span>
+          </button>
+          <h2 id="pageTitle">Dashboard</h2>
+          <p class="subtitle">Visão completa das finanças pessoais e metas mensais</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="secondary-button" id="openAddInitialBalance"><i class="fa-solid fa-wallet"></i> Saldo inicial</button>
+          <button class="primary-button" id="openAddTransaction"><i class="fa-solid fa-plus"></i> Novo lançamento</button>
+        </div>
+      </header>
+
+      <!-- Dashboard -->
+      <section class="page-panel active" id="dashboard">
+        <div class="panel-header">
+          <div>
+            <h3>Dashboard principal</h3>
+            <p>Todos os indicadores atualizados por mês e ano.</p>
+            <p id="dashboardFilterSummary" class="filter-summary">Selecione o período para ver os dados.</p>
+          </div>
+          <div class="filter-row">
+            <label>
+              Ano
+              <select id="dashboardYear"></select>
+            </label>
+            <label>
+              Mês
+              <select id="dashboardMonth"></select>
+            </label>
+          </div>
+        </div>
+        <div class="cards-grid">
+          <article class="card accent-card">
+            <div class="card-content">
+              <span>Saldo atual</span>
+              <strong id="cardBalance">R$ 0,00</strong>
+            </div>
+          </article>
+          <article class="card accent-card">
+            <div class="card-content">
+              <span>Saldo inicial</span>
+              <strong id="cardInitialBalance">R$ 0,00</strong>
+              <p class="card-note">Valor separado antes de entradas e saídas.</p>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-content">
+              <span>Entradas mês</span>
+              <strong id="cardIncome">R$ 0,00</strong>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-content">
+              <span>Saídas mês</span>
+              <strong id="cardExpense">R$ 0,00</strong>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-content">
+              <span>Maior gasto</span>
+              <strong id="cardTopExpense">R$ 0,00</strong>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-content">
+              <span>Média diária</span>
+              <strong id="cardDailyAverage">R$ 0,00</strong>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-content">
+              <span>Percentual economizado</span>
+              <strong id="cardSavedRate">0%</strong>
+            </div>
+          </article>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="chart-card">
+            <div class="section-header">
+              <h4>Entradas vs Saídas (Últimos 6 meses)</h4>
+            </div>
+            <canvas id="chartIncomeExpense"></canvas>
+          </section>
+          <section class="chart-card small">
+            <div class="section-header">
+              <h4>Gastos por categoria</h4>
+            </div>
+            <canvas id="chartCategorySpending"></canvas>
+          </section>
+          <section class="chart-card">
+            <div class="section-header">
+              <h4>Evolução do saldo (12 meses)</h4>
+            </div>
+            <canvas id="chartBalanceTrend"></canvas>
+          </section>
+          <section class="chart-card small">
+            <div class="section-header">
+              <h4>Top 5 maiores gastos</h4>
+            </div>
+            <canvas id="chartTopExpenses"></canvas>
+          </section>
+        </div>
+      </section>
+
+      <!-- Transactions -->
+      <section class="page-panel" id="transactions">
+        <div class="panel-header">
+          <div>
+            <h3>Gerenciar lançamentos</h3>
+            <p>Adicione, edite, filtre e organize seus registros financeiros.</p>
+          </div>
+          <div class="filter-row wrap">
+            <label>
+              Buscar
+              <input type="search" id="transactionSearch" placeholder="Descrição ou categoria" />
+            </label>
+            <label>
+              Ano
+              <select id="transactionYear"></select>
+            </label>
+            <label>
+              Mês
+              <select id="transactionMonth"></select>
+            </label>
+            <label>
+              Tipo
+              <select id="transactionTypeFilter">
+                <option value="all">Todos</option>
+                <option value="income">Entrada</option>
+                <option value="expense">Saída</option>
+              </select>
+            </label>
+            <label>
+              Categoria
+              <select id="transactionCategoryFilter"></select>
+            </label>
+            <label>
+              Itens / página
+              <select id="transactionPageSize">
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table" id="transactionTable">
+            <thead>
+              <tr>
+                <th data-sort="date">DATA <i class="fa-solid fa-sort"></i></th>
+                <th data-sort="category">CATEGORIA <i class="fa-solid fa-sort"></i></th>
+                <th>SUBCATEGORIA</th>
+                <th data-sort="type">TIPO <i class="fa-solid fa-sort"></i></th>
+                <th>DESCRIÇÃO</th>
+                <th data-sort="value">VALOR <i class="fa-solid fa-sort"></i></th>
+                <th>FORMA PAGAMENTO</th>
+                <th data-sort="status">STATUS <i class="fa-solid fa-sort"></i></th>
+                <th>AÇÕES</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pagination-row">
+          <div id="transactionPagination"></div>
+        </div>
+      </section>
+
+      <!-- Categories -->
+      <section class="page-panel" id="categories">
+        <div class="panel-header">
+          <div>
+            <h3>Categorias e Subcategorias</h3>
+            <p>Organize categorias padrão e personalize seu fluxo financeiro.</p>
+          </div>
+          <div class="filter-row">
+            <label>
+              Buscar categoria
+              <input type="search" id="categorySearch" placeholder="Nome da categoria" />
+            </label>
+            <button class="primary-button" id="openAddCategory"><i class="fa-solid fa-plus"></i> Nova categoria</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table" id="categoryTable">
+            <thead>
+              <tr>
+                <th>CATEGORIA</th>
+                <th>TIPO</th>
+                <th>SUBCATEGORIAS</th>
+                <th>ÍCONE</th>
+                <th>LIMITE MENSAL</th>
+                <th>AÇÕES</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Fixed Expenses -->
+      <section class="page-panel" id="fixed">
+        <div class="panel-header">
+          <div>
+            <h3>Gastos</h3>
+            <p>Gerencie gastos fixos (indefinidos) e variáveis (com duração definida).</p>
+          </div>
+          <div class="filter-row">
+            <button class="primary-button" id="openAddFixedExpense"><i class="fa-solid fa-plus"></i> Novo gasto</button>
+            <button class="secondary-button" id="applyFixedExpenses"><i class="fa-solid fa-calendar-check"></i> Lançar gastos do mês</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table" id="fixedTable">
+            <thead>
+              <tr>
+                <th>DESCRIÇÃO</th>
+                <th>CATEGORIA</th>
+                <th>VALOR</th>
+                <th>TIPO</th>
+                <th>DIA VENCIMENTO</th>
+                <th>DURAÇÃO</th>
+                <th>ATIVO</th>
+                <th>AÇÕES</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Reports -->
+      <section class="page-panel" id="reports">
+        <div class="panel-header">
+          <div>
+            <h3>Relatórios e análises</h3>
+            <p>Números inteligentes para decisões financeiras melhores.</p>
+          </div>
+          <div class="filter-row wrap">
+            <label>
+              Ano
+              <select id="reportYear"></select>
+            </label>
+            <button class="secondary-button" id="downloadCsvButton"><i class="fa-solid fa-file-csv"></i> CSV</button>
+            <button class="secondary-button" id="downloadPdfButton"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+          </div>
+        </div>
+        <div class="reports-grid">
+          <section class="report-card report-summary wide">
+            <h4>Resumo financeiro</h4>
+            <div id="reportSummary" class="report-list"></div>
+          </section>
+          <section class="report-card">
+            <h4>Gastos por categoria</h4>
+            <canvas id="chartReportCategory"></canvas>
+          </section>
+          <section class="report-card">
+            <h4>Comparativo mês a mês</h4>
+            <canvas id="chartReportMonthly"></canvas>
+          </section>
+          <section class="report-card">
+            <h4>Gastos por forma de pagamento</h4>
+            <canvas id="chartReportPayment"></canvas>
+          </section>
+          <section class="report-card report-summary">
+            <h4>Previsão e maiores gastos</h4>
+            <div class="report-list" id="reportTopExpenses"></div>
+          </section>
+          <section class="report-card report-summary">
+            <h4>Mês com mais ganhos</h4>
+            <canvas id="chartReportTopIncome"></canvas>
+            <div class="report-list" id="reportTopIncomeMonth"></div>
+          </section>
+          <section class="report-card heatmap-card">
+            <h4>Dias com mais gastos</h4>
+            <div class="heatmap-grid" id="spendingHeatmap"></div>
+          </section>
+        </div>
+      </section>
+
+      <!-- Admin -->
+      <section class="page-panel" id="admin">
+        <div class="panel-header">
+          <div>
+            <h3>Painel Administrativo</h3>
+            <p>Configurações avançadas, backup e acesso direto aos dados.</p>
+            
+          </div>
+          <div class="filter-row wrap">
+            <button class="danger-button" id="clearDataButton"><i class="fa-solid fa-trash"></i> Limpar todos os dados</button>
+            <button class="warning-button" id="clearTransactionsButton"><i class="fa-solid fa-times"></i> Excluir lançamentos</button>
+            <button class="secondary-button" id="clearCategoriesButton"><i class="fa-solid fa-folder-minus"></i> Limpar categorias personalizadas</button>
+            <button class="secondary-button" id="clearFixedExpensesButton"><i class="fa-solid fa-repeat"></i> Redefinir gastos</button>
+            <button class="secondary-button" id="loadDemoButton"><i class="fa-solid fa-database"></i> Carregar demo</button>
+          </div>
+        </div>
+        <div class="admin-grid">
+          <section class="admin-card">
+            <h4>🌍 Localização e Moeda</h4>
+            <div class="theme-form">
+              <label>
+                Moeda
+                <select id="currencySelect">
+                  <option value="BRL">🇧🇷 Real (R$)</option>
+                  <option value="USD">🇺🇸 Dólar ($)</option>
+                  <option value="EUR">🇪🇺 Euro (€)</option>
+                  <option value="GBP">🇬🇧 Libra (£)</option>
+                  <option value="JPY">🇯🇵 Iene (¥)</option>
+                  <option value="CAD">🇨🇦 Dólar Canadense (C$)</option>
+                </select>
+              </label>
+              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">ℹ️ A moeda selecionada será usada em todo o app</p>
+            </div>
+          </section>
+
+          <section class="admin-card">
+            <h4>🔔 Notificações</h4>
+            <div class="theme-form">
+              <label>
+                <input type="checkbox" id="notificationsToggle" />
+                Ativar notificações de limite
+              </label>
+              <label>
+                Avisar quando limite atingir
+                <input type="number" id="notificationThreshold" min="50" max="100" value="80" />%
+              </label>
+              <button class="primary-button" id="enablePushButton" style="width: 100%; margin-top: 1rem;">
+                <i class="fa-solid fa-bell"></i> Ativar notificações do navegador
+              </button>
+              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">📲 Receba alertas quando estiver próximo dos limites de gastos</p>
+            </div>
+          </section>
+
+          <section class="admin-card">
+            <h4>🗑️ Lixeira</h4>
+            <div class="theme-form">
+              <p id="trashStatusText" style="margin-bottom: 0.75rem; font-weight: 600;">Lixeira vazia</p>
+              <button class="secondary-button" id="restoreTrashButton" style="width: 100%; margin-bottom: 0.5rem;"><i class="fa-solid fa-rotate-left"></i> Restaurar último item</button>
+              <button class="danger-button" id="emptyTrashButton" style="width: 100%;"><i class="fa-solid fa-trash-can"></i> Esvaziar lixeira</button>
+              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">Itens permanecem 30 dias na lixeira antes de exclusão permanente.</p>
+            </div>
+          </section>
+
+          <section class="admin-card">
+            <h4>Tema e cores</h4>
+            <div class="theme-form">
+              <label>
+                Background
+                <input type="color" id="themeBg" value="#0f172a" />
+              </label>
+              <label>
+                Cabeçalhos
+                <input type="color" id="themeHeader" value="#111827" />
+              </label>
+              <label>
+                Cards
+                <input type="color" id="themeCard" value="#1f2937" />
+              </label>
+              <label>
+                Cor primária
+                <input type="color" id="themeAccent" value="#38bdf8" />
+              </label>
+              <button class="primary-button" id="saveThemeButton">Salvar tema</button>
+            </div>
+          </section>
+          <section class="admin-card">
+            <h4>Dados brutos</h4>
+            <div class="raw-data-panel">
+              <textarea id="rawDataEditor" rows="10"></textarea>
+              <div class="raw-actions">
+                <button class="secondary-button" id="refreshRawButton"><i class="fa-solid fa-arrow-rotate-right"></i> Atualizar</button>
+                <button class="primary-button" id="applyRawButton"><i class="fa-solid fa-floppy-disk"></i> Aplicar JSON</button>
+              </div>
+              <div class="raw-actions">
+                <input type="file" id="backupImportInput" accept="application/json" class="hidden" />
+                <button class="secondary-button" id="importBackupButton"><i class="fa-solid fa-upload"></i> Importar backup JSON</button>
+              </div>
+            </div>
+          </section>
+          <section class="admin-card wide">
+            <h4>Configurar limites por categoria</h4>
+            <div class="table-responsive small">
+              <table class="data-table" id="limitTable">
+                <thead>
+                  <tr>
+                    <th>Categoria</th>
+                    <th>Limite</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="backup-status" id="backupStatus" aria-live="polite"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal: Add/Edit transaction -->
+  <div class="modal" id="transactionModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="transactionModalTitle">Novo lançamento</h3>
+        <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="transactionForm">
+        <div class="form-grid">
+          <label>
+            Data
+            <input type="date" id="transactionDate" required />
+          </label>
+          <label>
+            Tipo
+            <select id="transactionType" required>
+              <option value="income">Entrada</option>
+              <option value="expense">Saída</option>
+            </select>
+          </label>
+          <label>
+            Categoria
+            <select id="transactionCategory" required></select>
+          </label>
+          <label>
+            Subcategoria
+            <input type="text" id="transactionSubcategory" placeholder="Ex: Mercado" />
+          </label>
+          <label>
+            Valor
+            <input type="number" id="transactionValue" step="0.01" min="0" required />
+          </label>
+          <label>
+            Forma de pagamento
+            <input type="text" id="transactionPayment" placeholder="Cartão, Pix, Dinheiro" />
+          </label>
+          <label>
+            Status
+            <select id="transactionStatus" required>
+              <option value="paid">Pago</option>
+              <option value="pending">Pendente</option>
+              <option value="scheduled">Agendado</option>
+            </select>
+          </label>
+          <label class="full-width">
+            Descrição
+            <textarea id="transactionDescription" rows="3" placeholder="Descrição detalhada"></textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar lançamento</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit initial balance -->
+  <div class="modal" id="initialBalanceModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="initialBalanceModalTitle">Saldo inicial</h3>
+        <button class="icon-button" data-close aria-label="Fechar modal de saldo inicial"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="initialBalanceForm">
+        <div class="form-grid">
+          <label>
+            Valor inicial
+            <input type="number" id="initialBalanceValue" step="0.01" min="0" required />
+          </label>
+          <label>
+            Data de referência
+            <input type="date" id="initialBalanceDate" required />
+          </label>
+          <label class="full-width">
+            Observação
+            <input type="text" id="initialBalanceNote" placeholder="Ex: Saldo inicial do período" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar saldo inicial</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit category -->
+  <div class="modal" id="categoryModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="categoryModalTitle">Nova categoria</h3>
+        <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="categoryForm">
+        <div class="form-grid">
+          <label>
+            Nome
+            <input type="text" id="categoryName" required />
+          </label>
+          <label>
+            Tipo
+            <select id="categoryType" required>
+              <option value="expense">Saída</option>
+              <option value="income">Entrada</option>
+            </select>
+          </label>
+          <label>
+            Ícone
+            <input type="text" id="categoryIcon" placeholder="Emoji ou código FontAwesome" />
+          </label>
+          <label>
+            Subcategorias (separadas por vírgula)
+            <input type="text" id="categorySubcategories" placeholder="Mercado, Ifood" />
+          </label>
+          <label>
+            Limite mensal
+            <input type="number" id="categoryLimit" min="0" step="0.01" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar categoria</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Action confirmation -->
+  <div class="modal" id="confirmationModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="confirmationModalTitle">Confirmação necessária</h3>
+        <button class="icon-button" data-close aria-label="Fechar modal de confirmação"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="confirmationForm">
+        <div class="form-grid">
+          <p id="confirmationText">Digite CONFIRMAR para continuar.</p>
+          <label class="full-width">
+            Confirmação
+            <input type="text" id="confirmationInput" autocomplete="off" required />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="danger-button">Confirmar ação</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit fixed expense -->
+  <div class="modal" id="fixedModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="fixedModalTitle">Novo gasto</h3>
+        <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="fixedForm">
+        <div class="form-grid">
+          <label>
+            Descrição
+            <input type="text" id="fixedDescription" required />
+          </label>
+          <label>
+            Categoria
+            <select id="fixedCategory" required></select>
+          </label>
+          <label>
+            Valor
+            <input type="number" id="fixedValue" step="0.01" min="0" required />
+          </label>
+          <label>
+            Tipo
+            <select id="fixedType" required>
+              <option value="fixed">Fixo (indefinido)</option>
+              <option value="variable">Variável (com duração)</option>
+            </select>
+          </label>
+          <label>
+            Dia vencimento
+            <input type="number" id="fixedDay" min="1" max="28" required />
+          </label>
+          <label id="durationLabelWrapper" style="display: none;">
+            Duração (meses)
+            <input type="number" id="fixedDuration" min="1" max="36" step="1" placeholder="Ex: 3" />
+          </label>
+          <label>
+            Ativo
+            <select id="fixedActive" required>
+              <option value="true">Sim</option>
+              <option value="false">Não</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar gasto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Admin Warning -->
+  <div class="modal" id="adminWarningModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3><i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b;"></i> Atenção - Zona de Risco</h3>
+        <button class="icon-button" data-close aria-label="Fechar aviso"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="form-grid">
+        <div style="background: rgba(245, 158, 11, 0.1); padding: 16px; border-radius: 8px; border-left: 4px solid #f59e0b;">
+          <p><strong>⚠️ Você está acessando o Painel Administrativo</strong></p>
+          <p style="margin: 8px 0;">Este painel contém operações que podem:</p>
+          <ul style="margin: 8px 0; padding-left: 20px;">
+            <li>Deletar todos os seus dados permanentemente</li>
+            <li>Corromper categorias e gastos fixos</li>
+            <li>Causar inconsistências nos relatórios</li>
+          </ul>
+          <p style="margin: 8px 0; color: #dc2626;"><strong>Recomendação: Faça um backup antes de realizar qualquer alteração!</strong></p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" data-close>Entendi, continuar</button>
+        <button type="button" class="primary-button" id="makeBackupFromWarning"><i class="fa-solid fa-download"></i> Fazer Backup Agora</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Danger Confirmation -->
+  <div class="modal" id="dangerConfirmModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="dangerModalTitle"><i class="fa-solid fa-skull" style="color: #dc2626;"></i> Confirmação de Ação Perigosa</h3>
+        <button class="icon-button" data-close aria-label="Cancelar"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="dangerConfirmForm">
+        <div class="form-grid">
+          <div style="background: rgba(220, 38, 38, 0.1); padding: 16px; border-radius: 8px; border-left: 4px solid #dc2626;">
+            <p id="dangerWarningText">Esta ação não pode ser desfeita.</p>
+          </div>
+          <label class="full-width">
+            <strong>Digite <span id="confirmWord" style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">CONFIRMAR</span> para prosseguir</strong>
+            <input type="text" id="dangerConfirmInput" autocomplete="off" placeholder="Digite aqui..." required />
+          </label>
+          <p style="color: #6b7280; font-size: 12px;">⚠️ Esta operação não pode ser desfeita!</p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="danger-button" id="dangerSubmitBtn" disabled>Confirmar Ação</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Backup Progress -->
+  <div class="modal" id="backupProgressModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3><i class="fa-solid fa-download" style="color: #3b82f6;"></i> Backup em Andamento</h3>
+      </header>
+      <div class="form-grid">
+        <div style="text-align: center; padding: 20px;">
+          <div style="display: inline-block; width: 60px; height: 60px; border: 4px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+          <p style="margin-top: 16px;">Salvando backup automaticamente...</p>
+          <p style="color: #6b7280; font-size: 12px;" id="backupStatusText">Por favor, aguarde.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+</body>
+</html>
