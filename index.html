@@ -33,6 +33,7 @@
         <button class="nav-link" role="tab" aria-selected="false" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
         <button class="nav-link" role="tab" aria-selected="false" data-target="fixed"><i class="fa-solid fa-repeat"></i> Gastos</button>
         <button class="nav-link" role="tab" aria-selected="false" data-target="reports"><i class="fa-solid fa-chart-line"></i> Relatórios</button>
+        <button class="nav-link" role="tab" aria-selected="false" data-target="help"><i class="fa-solid fa-question-circle"></i> Tenho Dúvida</button>
         <button class="nav-link" role="tab" aria-selected="false" data-target="admin"><i class="fa-solid fa-gear"></i> Administrativo</button>
       </nav>
       <div class="sidebar-footer">
@@ -268,6 +269,13 @@
             <button class="secondary-button" id="applyFixedExpenses"><i class="fa-solid fa-calendar-check"></i> Lançar gastos do mês</button>
           </div>
         </div>
+        <div class="panel-summary" style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:1rem;">
+          <div>
+            <span style="display:block; font-weight:600; margin-bottom:4px;">Total de gastos cadastrados</span>
+            <strong id="fixedTotalSummary">R$ 0,00</strong>
+          </div>
+          <div style="font-size:0.92rem; color:#6b7280;">Este valor mostra a soma de todos os gastos atualmente cadastrados na lista.</div>
+        </div>
         <div class="table-responsive">
           <table class="data-table" id="fixedTable">
             <thead>
@@ -303,36 +311,514 @@
             <button class="secondary-button" id="downloadPdfButton"><i class="fa-solid fa-file-pdf"></i> PDF</button>
           </div>
         </div>
+        <div class="report-tabs">
+          <button class="tab-button active" data-tab="analysis"><i class="fa-solid fa-chart-bar"></i> Análise Atual</button>
+          <button class="tab-button" data-tab="projections"><i class="fa-solid fa-chart-line"></i> Projeções</button>
+          <button class="tab-button" data-tab="planning"><i class="fa-solid fa-target"></i> Planejamento</button>
+        </div>
         <div class="reports-grid">
-          <section class="report-card report-summary wide">
-            <h4>Resumo financeiro</h4>
-            <div id="reportSummary" class="report-list"></div>
-          </section>
-          <section class="report-card">
-            <h4>Gastos por categoria</h4>
-            <canvas id="chartReportCategory"></canvas>
-          </section>
-          <section class="report-card">
-            <h4>Comparativo mês a mês</h4>
-            <canvas id="chartReportMonthly"></canvas>
-          </section>
-          <section class="report-card">
-            <h4>Gastos por forma de pagamento</h4>
-            <canvas id="chartReportPayment"></canvas>
-          </section>
-          <section class="report-card report-summary">
-            <h4>Previsão e maiores gastos</h4>
-            <div class="report-list" id="reportTopExpenses"></div>
-          </section>
-          <section class="report-card report-summary">
-            <h4>Mês com mais ganhos</h4>
-            <canvas id="chartReportTopIncome"></canvas>
-            <div class="report-list" id="reportTopIncomeMonth"></div>
-          </section>
-          <section class="report-card heatmap-card">
-            <h4>Dias com mais gastos</h4>
-            <div class="heatmap-grid" id="spendingHeatmap"></div>
-          </section>
+          <!-- Análise Atual Tab -->
+          <div class="tab-content active" id="analysis-tab">
+            <section class="report-card report-summary wide">
+              <h4>Resumo financeiro</h4>
+              <div id="reportSummary" class="report-list"></div>
+            </section>
+            <section class="report-card">
+              <h4>Gastos por categoria</h4>
+              <canvas id="chartReportCategory"></canvas>
+            </section>
+            <section class="report-card">
+              <h4>Comparativo mês a mês</h4>
+              <canvas id="chartReportMonthly"></canvas>
+            </section>
+            <section class="report-card">
+              <h4>Gastos por forma de pagamento</h4>
+              <canvas id="chartReportPayment"></canvas>
+            </section>
+            <section class="report-card report-summary">
+              <h4>Previsão e maiores gastos</h4>
+              <div class="report-list" id="reportTopExpenses"></div>
+            </section>
+            <section class="report-card report-summary">
+              <h4>Mês com mais ganhos</h4>
+              <canvas id="chartReportTopIncome"></canvas>
+              <div class="report-list" id="reportTopIncomeMonth"></div>
+            </section>
+            <section class="report-card heatmap-card">
+              <h4>Dias com mais gastos</h4>
+              <div class="heatmap-grid" id="spendingHeatmap"></div>
+            </section>
+          </div>
+
+          <!-- Projeções Tab -->
+          <div class="tab-content" id="projections-tab">
+            <section class="report-card report-summary wide">
+              <h4>Dashboard de projeções</h4>
+              <div id="projectionDashboard" class="report-list" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1rem;">
+                <div class="metric-card" style="background: rgba(34, 197, 94, 0.1); border-left:4px solid #22c55e; padding:1rem; border-radius:8px;">
+                  <div style="font-size:0.8rem; color:#6b7280;">Capacidade de poupança</div>
+                  <div id="savingsCapacity" style="font-size:1.2rem; font-weight:600; color:#22c55e;">R$ 0,00</div>
+                </div>
+                <div class="metric-card" style="background: rgba(59, 130, 246, 0.1); border-left:4px solid #3b82f6; padding:1rem; border-radius:8px;">
+                  <div style="font-size:0.8rem; color:#6b7280;">Projeção em 6 meses</div>
+                  <div id="sixMonthProjection" style="font-size:1.2rem; font-weight:600; color:#3b82f6;">R$ 0,00</div>
+                </div>
+                <div class="metric-card" style="background: rgba(245, 158, 11, 0.1); border-left:4px solid #f59e0b; padding:1rem; border-radius:8px;">
+                  <div style="font-size:0.8rem; color:#6b7280;">Limite seguro de parcela</div>
+                  <div id="safeInstallmentLimit" style="font-size:1.2rem; font-weight:600; color:#f59e0b;">R$ 0,00</div>
+                </div>
+              </div>
+            </section>
+            <section class="report-card report-summary">
+              <h4>Projeções de ganhos e gastos</h4>
+              <div id="projectionSummary" class="report-list" style="display:grid; gap:0.75rem;"></div>
+              <div id="projectionList" class="report-list"></div>
+            </section>
+            <section class="report-card report-summary wide">
+              <h4>Simulador de compra</h4>
+              <div class="projection-form" style="display:grid; gap:0.75rem;">
+                <label>
+                  Valor da compra
+                  <input type="number" id="purchaseValue" step="0.01" min="0" placeholder="R$ 0,00" />
+                </label>
+                <label>
+                  Parcelas
+                  <input type="number" id="purchaseInstallments" min="1" step="1" value="1" />
+                </label>
+                <label>
+                  Renda mensal estimada
+                  <input type="number" id="purchaseMonthlyIncome" step="0.01" min="0" placeholder="Use média automática" />
+                </label>
+                <label>
+                  Gastos mensais estimados
+                  <input type="number" id="purchaseMonthlyExpense" step="0.01" min="0" placeholder="Use média automática" />
+                </label>
+                <button class="primary-button" id="calculatePurchaseProjection">Calcular compra</button>
+              </div>
+              <div id="purchaseProjectionResult" class="report-list" style="margin:1rem 0;"></div>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:start;">
+                <div>
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Impacto no orçamento mensal</h5>
+                  <canvas id="chartPurchaseProjection"></canvas>
+                </div>
+                <div id="purchaseInsights" style="background: rgba(31, 41, 55, 0.5); padding:1rem; border-radius:8px; border-left:4px solid #38bdf8;">
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">💡 Insights</h5>
+                  <div id="purchaseInsightsContent" style="font-size:0.85rem; line-height:1.4;"></div>
+                </div>
+              </div>
+            </section>
+            <section class="report-card report-summary wide">
+              <h4>Projeção de saldo em meses</h4>
+              <div class="projection-form" style="display:grid; gap:0.75rem;">
+                <label>
+                  Saldo atual
+                  <input type="number" id="balanceStartValue" step="0.01" min="0" placeholder="Use saldo atual" />
+                </label>
+                <label>
+                  Ganho mensal
+                  <input type="number" id="balanceMonthlyIncome" step="0.01" min="0" placeholder="Use média automática" />
+                </label>
+                <label>
+                  Gasto mensal
+                  <input type="number" id="balanceMonthlyExpense" step="0.01" min="0" placeholder="Use média automática" />
+                </label>
+                <label>
+                  Período (meses)
+                  <input type="number" id="balanceProjectionMonths" min="1" step="1" value="6" />
+                </label>
+                <button class="primary-button" id="calculateBalanceProjection">Calcular projeção</button>
+              </div>
+              <div id="balanceProjectionResult" class="report-list" style="margin:1rem 0;"></div>
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:start;">
+                <div>
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Evolução do saldo</h5>
+                  <canvas id="chartBalanceProjection"></canvas>
+                </div>
+                <div id="balanceInsights" style="background: rgba(31, 41, 55, 0.5); padding:1rem; border-radius:8px; border-left:4px solid #38bdf8;">
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">📈 Análise</h5>
+                  <div id="balanceInsightsContent" style="font-size:0.85rem; line-height:1.4;"></div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- Planejamento Tab -->
+          <div class="tab-content" id="planning-tab">
+            <section class="report-card report-summary wide">
+              <h4>🎯 Metas de poupança</h4>
+              <div class="goal-form" style="display:grid; gap:0.75rem; margin-bottom:1rem;">
+                <label>
+                  Meta de poupança mensal
+                  <input type="number" id="monthlySavingsGoal" step="0.01" min="0" placeholder="R$ 0,00" />
+                </label>
+                <label>
+                  Prazo (meses)
+                  <input type="number" id="goalDeadline" min="1" step="1" value="12" />
+                </label>
+                <button class="primary-button" id="setSavingsGoal">Definir meta</button>
+              </div>
+              <div id="savingsGoalProgress" class="report-list"></div>
+              <canvas id="chartSavingsGoal" style="margin-top:1rem;"></canvas>
+              <div id="trendAnalysisDetails"></div>
+            </section>
+            <section class="report-card report-summary wide">
+              <h4>⚠️ Cenários de risco</h4>
+              <div class="risk-scenarios" style="display:grid; gap:1rem;">
+                <div class="scenario-card" style="background: rgba(239, 68, 68, 0.1); border-left:4px solid #ef4444; padding:1rem; border-radius:8px;">
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Sem renda por 3 meses</h5>
+                  <div id="emergencyFund3Months" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
+                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Fundo necessário</div>
+                </div>
+                <div class="scenario-card" style="background: rgba(245, 158, 11, 0.1); border-left:4px solid #f59e0b; padding:1rem; border-radius:8px;">
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Aumento de 20% nos gastos</h5>
+                  <div id="expenseIncrease20Percent" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
+                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Novo saldo mensal</div>
+                </div>
+                <div class="scenario-card" style="background: rgba(34, 197, 94, 0.1); border-left:4px solid #22c55e; padding:1rem; border-radius:8px;">
+                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Reducao de 15% na renda</h5>
+                  <div id="incomeReduction15Percent" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
+                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Novo saldo mensal</div>
+                </div>
+              </div>
+              <div id="riskAnalysisDetails"></div>
+            </section>
+            <section class="report-card report-summary wide">
+              <h4>📊 Cenários salvos</h4>
+              <div class="scenario-form" style="display:grid; gap:0.75rem; margin-bottom:1rem;">
+                <label>
+                  Nome do cenário
+                  <input type="text" id="scenarioName" placeholder="Ex: Compra do carro" />
+                </label>
+                <label>
+                  Descrição
+                  <textarea id="scenarioDescription" rows="2" placeholder="Descrição do cenário"></textarea>
+                </label>
+                <button class="primary-button" id="saveCurrentScenario">Salvar cenário atual</button>
+              </div>
+              <div id="savedScenarios" class="report-list"></div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- Página de Ajuda/Dúvidas -->
+      <section class="page-panel" id="help">
+        <div class="panel-header">
+          <div>
+            <h3>🆘 Tenho Dúvida - Guia Completo do LuminaFin</h3>
+            <p>Entenda tudo sobre o LuminaFin de forma simples e didática</p>
+          </div>
+        </div>
+
+        <div class="help-content">
+          <!-- Introdução -->
+          <div class="help-section">
+            <h4>🎯 O que é o LuminaFin?</h4>
+            <p>O <strong>LuminaFin</strong> é um aplicativo web completo para controle financeiro pessoal. Ele ajuda você a:</p>
+            <ul>
+              <li>📊 <strong>Acompanhar</strong> todas as suas receitas e despesas</li>
+              <li>📈 <strong>Analisar</strong> seus gastos por categoria</li>
+              <li>🔮 <strong>Projetar</strong> seu saldo futuro</li>
+              <li>🎯 <strong>Definir metas</strong> de poupança</li>
+              <li>⚠️ <strong>Receber alertas</strong> inteligentes sobre seu orçamento</li>
+              <li>💾 <strong>Salvar cenários</strong> diferentes para simular situações</li>
+            </ul>
+          </div>
+
+          <!-- Navegação -->
+          <div class="help-section">
+            <h4>🧭 Como Navegar no App</h4>
+            <p>Use o menu lateral esquerdo para acessar diferentes áreas:</p>
+            <div class="help-nav-grid">
+              <div class="nav-item">
+                <i class="fa-solid fa-house"></i>
+                <strong>Dashboard</strong>
+                <p>Visão geral com cards de saldo, receitas, despesas e gráficos principais</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-file-invoice-dollar"></i>
+                <strong>Lançamentos</strong>
+                <p>Cadastre receitas e despesas, edite ou exclua registros existentes</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-folder-open"></i>
+                <strong>Categorias</strong>
+                <p>Organize seus gastos em categorias personalizadas</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-repeat"></i>
+                <strong>Gastos Fixos</strong>
+                <p>Configure despesas que se repetem mensalmente</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-chart-line"></i>
+                <strong>Relatórios</strong>
+                <p>Análises detalhadas com gráficos e projeções</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-question-circle"></i>
+                <strong>Tenho Dúvida</strong>
+                <p>Este guia completo que você está lendo agora</p>
+              </div>
+              <div class="nav-item">
+                <i class="fa-solid fa-gear"></i>
+                <strong>Administrativo</strong>
+                <p>Configurações avançadas, backup e dados brutos</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dashboard -->
+          <div class="help-section">
+            <h4>📊 Dashboard - Sua Visão Geral</h4>
+            <p>O Dashboard é a primeira tela que você vê. Ele mostra:</p>
+            <h5>📈 Cards Principais:</h5>
+            <ul>
+              <li><strong>Saldo Atual:</strong> Dinheiro que você tem disponível</li>
+              <li><strong>Saldo Inicial:</strong> Valor que você começou o mês</li>
+              <li><strong>Receitas do Mês:</strong> Total de dinheiro que entrou</li>
+              <li><strong>Despesas do Mês:</strong> Total de dinheiro que saiu</li>
+              <li><strong>Saldo Líquido:</strong> Receitas menos despesas</li>
+            </ul>
+
+            <h5>📊 Gráficos:</h5>
+            <ul>
+              <li><strong>Receitas vs Despesas:</strong> Comparação mensal</li>
+              <li><strong>Gastos por Categoria:</strong> Onde seu dinheiro vai</li>
+              <li><strong>Tendência de Saldo:</strong> Como seu dinheiro evolui</li>
+            </ul>
+
+            <h5>🎛️ Filtros:</h5>
+            <p>Use os filtros de <strong>Ano</strong> e <strong>Mês</strong> para ver dados de períodos específicos.</p>
+          </div>
+
+          <!-- Lançamentos -->
+          <div class="help-section">
+            <h4>💰 Lançamentos - Registrando Movimentações</h4>
+            <p>Aqui você registra todas as entradas e saídas de dinheiro.</p>
+
+            <h5>➕ Como Adicionar um Lançamento:</h5>
+            <ol>
+              <li>Clique em <strong>"Novo lançamento"</strong></li>
+              <li>Escolha <strong>Tipo:</strong> Receita (dinheiro entrando) ou Despesa (dinheiro saindo)</li>
+              <li>Selecione a <strong>Data</strong> da movimentação</li>
+              <li>Escolha a <strong>Categoria</strong> apropriada</li>
+              <li>Digite o <strong>Valor</strong> (use ponto para centavos)</li>
+              <li>Adicione uma <strong>Descrição</strong> clara</li>
+              <li>Selecione o <strong>Método de Pagamento</strong></li>
+              <li>Marque o <strong>Status:</strong> Pago ou Pendente</li>
+              <li>Clique em <strong>Salvar</strong></li>
+            </ol>
+
+            <h5>📝 Campos Importantes:</h5>
+            <ul>
+              <li><strong>Subcategoria:</strong> Detalhe dentro da categoria (ex: "Supermercado" dentro de "Alimentação")</li>
+              <li><strong>Status:</strong> Ajuda a controlar contas a pagar/receber</li>
+            </ul>
+
+            <h5>🔍 Busca e Filtros:</h5>
+            <p>Use a barra de busca para encontrar lançamentos específicos, ou filtre por ano, mês, tipo ou categoria.</p>
+          </div>
+
+          <!-- Categorias -->
+          <div class="help-section">
+            <h4>📁 Categorias - Organizando seus Gastos</h4>
+            <p>As categorias ajudam a classificar seus gastos para melhor análise.</p>
+
+            <h5>🎨 Categorias Padrão:</h5>
+            <p>O app já vem com categorias básicas como Alimentação, Transporte, Lazer, etc.</p>
+
+            <h5>➕ Criando Categorias Personalizadas:</h5>
+            <ol>
+              <li>Clique em <strong>"Nova categoria"</strong></li>
+              <li>Dê um <strong>Nome</strong> claro e descritivo</li>
+              <li>Escolha o <strong>Tipo:</strong> Receita ou Despesa</li>
+              <li>Adicione um <strong>Ícone</strong> (use emojis)</li>
+              <li>Crie <strong>Subcategorias</strong> se necessário</li>
+              <li>Defina um <strong>Limite</strong> mensal (opcional)</li>
+            </ol>
+
+            <h5>⚠️ Limites de Categoria:</h5>
+            <p>Configure limites para controlar gastos. O app avisa quando você se aproxima do limite!</p>
+          </div>
+
+          <!-- Gastos Fixos -->
+          <div class="help-section">
+            <h4>🔄 Gastos Fixos - Despesas que se Repetem</h4>
+            <p>Para contas que pagamos todo mês, como aluguel, luz, internet, etc.</p>
+
+            <h5>➕ Como Configurar:</h5>
+            <ol>
+              <li>Clique em <strong>"Novo gasto"</strong></li>
+              <li>Digite a <strong>Descrição</strong> (ex: "Aluguel")</li>
+              <li>Selecione a <strong>Categoria</strong></li>
+              <li>Defina o <strong>Valor</strong> mensal</li>
+              <li>Escolha o <strong>Dia</strong> do mês para lançamento</li>
+              <li>Selecione o <strong>Tipo:</strong> Fixo ou Variável</li>
+              <li>Para gastos variáveis, defina a <strong>Duração</strong> em meses</li>
+            </ol>
+
+            <h5>🔄 Tipos de Gastos Fixos:</h5>
+            <ul>
+              <li><strong>Fixo:</strong> Valor igual todo mês (ex: aluguel)</li>
+              <li><strong>Variável:</strong> Valor que muda, por tempo limitado (ex: curso de 6 meses)</li>
+            </ul>
+
+            <h5>🤖 Aplicação Automática:</h5>
+            <p>Use o botão <strong>"Aplicar Gastos Fixos"</strong> para lançar automaticamente as contas do mês atual.</p>
+          </div>
+
+          <!-- Relatórios -->
+          <div class="help-section">
+            <h4>📊 Relatórios - Análises Detalhadas</h4>
+            <p>A área de relatórios tem várias abas com análises específicas.</p>
+
+            <h5>📈 Abas Disponíveis:</h5>
+            <div class="help-tabs">
+              <div class="tab-info">
+                <h6>📊 Visão Geral</h6>
+                <p>Gráficos de categoria, comparação mensal, distribuição de pagamentos</p>
+              </div>
+              <div class="tab-info">
+                <h6>🎯 Cenários</h6>
+                <p>Salve e carregue diferentes situações financeiras para simular</p>
+              </div>
+              <div class="tab-info">
+                <h6>💾 Metas de Poupança</h6>
+                <p>Defina e acompanhe suas metas de economia</p>
+              </div>
+              <div class="tab-info">
+                <h6>⚠️ Análise de Risco</h6>
+                <p>Veja cenários de stress financeiro e recomendações</p>
+              </div>
+              <div class="tab-info">
+                <h6>📈 Tendências</h6>
+                <p>Compare dados históricos com projeções futuras</p>
+              </div>
+            </div>
+
+            <h5>🎛️ Cenários - O Que São?</h5>
+            <p>Cenários permitem salvar "fotografias" completas do seu orçamento. Útil para:</p>
+            <ul>
+              <li>💡 <strong>Simular mudanças:</strong> "E se eu cortar delivery?"</li>
+              <li>📅 <strong>Planejamento:</strong> Cenários para diferentes meses</li>
+              <li>🔄 <strong>Comparação:</strong> Antes e depois de mudanças</li>
+            </ul>
+          </div>
+
+          <!-- Projeções -->
+          <div class="help-section">
+            <h4>🔮 Projeções - Olhando para o Futuro</h4>
+            <p>O LuminaFin calcula automaticamente projeções baseadas nos seus dados.</p>
+
+            <h5>💰 Projeção de Saldo:</h5>
+            <p>Mostra quanto dinheiro você terá nos próximos meses baseado no padrão atual.</p>
+
+            <h5>🛒 Projeção de Compras:</h5>
+            <p>Calcule se você pode comprar algo parcelado sem comprometer seu orçamento.</p>
+
+            <h5>🎯 Metas de Poupança:</h5>
+            <ol>
+              <li>Defina quanto quer poupar por mês</li>
+              <li>Escolha em quantos meses quer atingir a meta</li>
+              <li>Acompanhe o progresso com gráfico visual</li>
+            </ol>
+          </div>
+
+          <!-- Alertas -->
+          <div class="help-section">
+            <h4>🚨 Alertas Inteligentes</h4>
+            <p>O app monitora automaticamente sua situação financeira e avisa sobre:</p>
+
+            <h5>⚠️ Tipos de Alertas:</h5>
+            <ul>
+              <li><strong>Limite de Categoria:</strong> Quando se aproxima do limite mensal</li>
+              <li><strong>Projeção Negativa:</strong> Se seu saldo ficará negativo</li>
+              <li><strong>Saldo Baixo:</strong> Quando tem menos de 50% das despesas médias</li>
+              <li><strong>Gasto Excessivo:</strong> Comparado com meses anteriores</li>
+            </ul>
+
+            <h5>🔔 Como Funcionam:</h5>
+            <p>Os alertas aparecem automaticamente no canto superior direito da tela.</p>
+          </div>
+
+          <!-- Administrativo -->
+          <div class="help-section">
+            <h4>⚙️ Administrativo - Configurações Avançadas</h4>
+            <p>Área para usuários avançados e manutenção.</p>
+
+            <h5>💾 Backup:</h5>
+            <p>Exporte todos os seus dados para um arquivo JSON seguro.</p>
+
+            <h5>📱 Instalação:</h5>
+            <p>Instale o app como aplicativo nativo no seu dispositivo.</p>
+
+            <h5>🎨 Tema:</h5>
+            <p>Personalize cores e alterne entre tema claro e escuro.</p>
+
+            <h5>🗃️ Dados Brutos:</h5>
+            <p>Veja e edite seus dados em formato JSON (apenas para experts).</p>
+          </div>
+
+          <!-- Dicas Gerais -->
+          <div class="help-section">
+            <h4>💡 Dicas para Melhor Uso</h4>
+            <div class="tips-grid">
+              <div class="tip">
+                <h6>📅 Lançamentos Diários</h6>
+                <p>Registre seus gastos no mesmo dia que ocorrem para não esquecer.</p>
+              </div>
+              <div class="tip">
+                <h6>🏷️ Categorias Detalhadas</h6>
+                <p>Quanto mais específicas suas categorias, melhor sua análise.</p>
+              </div>
+              <div class="tip">
+                <h6>🎯 Metas Realistas</h6>
+                <p>Defina metas de poupança que você realmente consegue alcançar.</p>
+              </div>
+              <div class="tip">
+                <h6>📊 Relatórios Semanais</h6>
+                <p>Verifique seus relatórios semanalmente para manter o controle.</p>
+              </div>
+              <div class="tip">
+                <h6>💾 Backup Regular</h6>
+                <p>Faça backup dos seus dados pelo menos mensalmente.</p>
+              </div>
+              <div class="tip">
+                <h6>🔍 Busca Inteligente</h6>
+                <p>Use Ctrl+K para buscar qualquer coisa no app rapidamente.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Seção de Comentários -->
+          <div class="help-section">
+            <h4>💬 Comentários e Dúvidas Futuras</h4>
+            <p>Esta seção é para adicionar comentários sobre dúvidas que surgirem no futuro.</p>
+            <div id="helpComments" class="comments-section">
+              <!-- Comentários serão adicionados aqui via JavaScript -->
+              <div class="comment-placeholder">
+                <p>📝 <strong>Comentários serão adicionados aqui conforme surgirem dúvidas.</strong></p>
+                <p>Para adicionar um comentário, edite o código JavaScript na função <code>renderHelpPage()</code>.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Suporte -->
+          <div class="help-section">
+            <h4>🆘 Precisa de Ajuda?</h4>
+            <p>Se mesmo assim ficou com dúvidas:</p>
+            <ul>
+              <li>📖 <strong>Releia este guia</strong> - todas as informações estão aqui</li>
+              <li>🔍 <strong>Use a busca</strong> (Ctrl+K) para encontrar informações específicas</li>
+              <li>💾 <strong>Faça backup</strong> antes de fazer mudanças drásticas</li>
+              <li>📱 <strong>Teste primeiro</strong> com dados de exemplo antes de usar dados reais</li>
+            </ul>
+
+            <div class="help-footer">
+              <p><strong>LuminaFin v1.2</strong> - Seu controle financeiro completo e inteligente! 🚀</p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -349,7 +835,6 @@
             <button class="warning-button" id="clearTransactionsButton"><i class="fa-solid fa-times"></i> Excluir lançamentos</button>
             <button class="secondary-button" id="clearCategoriesButton"><i class="fa-solid fa-folder-minus"></i> Limpar categorias personalizadas</button>
             <button class="secondary-button" id="clearFixedExpensesButton"><i class="fa-solid fa-repeat"></i> Redefinir gastos</button>
-            <button class="secondary-button" id="loadDemoButton"><i class="fa-solid fa-database"></i> Carregar demo</button>
           </div>
         </div>
         <div class="admin-grid">
@@ -455,6 +940,32 @@
       </section>
     </main>
   </div>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="footer-content">
+      <div class="footer-section">
+        <p>LuminaFin v1.2</p>
+      </div>
+      <div class="footer-section">
+        <p>Desenvolvido por <strong>Izanagi</strong></p>
+      </div>
+      <div class="footer-socials">
+        <a href="https://www.instagram.com/prod.izanagi" target="_blank" rel="noopener noreferrer" title="Instagram" aria-label="Instagram">
+          <i class="fa-brands fa-instagram"></i>
+        </a>
+        <a href="https://www.youtube.com/@prod.izanagi" target="_blank" rel="noopener noreferrer" title="YouTube" aria-label="YouTube">
+          <i class="fa-brands fa-youtube"></i>
+        </a>
+        <a href="https://wa.me/5577984545" target="_blank" rel="noopener noreferrer" title="WhatsApp" aria-label="WhatsApp">
+          <i class="fa-brands fa-whatsapp"></i>
+        </a>
+        <a href="https://cristiansant17.github.io/portfolioProdIzanagi/" target="_blank" rel="noopener noreferrer" title="Portfólio" aria-label="Portfólio">
+          <i class="fa-solid fa-globe"></i>
+        </a>
+      </div>
+    </div>
+  </footer>
 
   <!-- Modal: Add/Edit transaction -->
   <div class="modal" id="transactionModal" aria-hidden="true">
@@ -732,6 +1243,35 @@
       to { transform: rotate(360deg); }
     }
   </style>
+
+  <!-- Modal: Tutorial/Como Usar -->
+  <div class="modal" id="tutorialModal" aria-hidden="true">
+    <div class="modal-content" style="max-width: 500px;">
+      <header>
+        <h3>👋 Bem-vindo ao LuminaFin!</h3>
+        <button class="icon-button" data-close aria-label="Fechar"><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <div class="form-grid">
+        <p style="color: #7dd3fc; font-size: 14px; margin: 0;">Parece que você está começando. Veja como usar o app:</p>
+        
+        <div style="background: rgba(56, 189, 248, 0.1); padding: 16px; border-radius: 8px; border-left: 4px solid #38bdf8; margin: 16px 0;">
+          <h4 style="margin-top: 0; color: #38bdf8;">📝 Primeiros Passos</h4>
+          <ul style="margin: 8px 0; padding-left: 20px;">
+            <li>Clique em <strong>"Novo lançamento"</strong> para registrar despesas ou receitas</li>
+            <li>Configure seu <strong>"Saldo inicial"</strong> no topo</li>
+            <li>Crie categorias e organize seus gastos</li>
+            <li>Acompanhe suas finanças no <strong>Dashboard</strong></li>
+          </ul>
+        </div>
+
+        <p style="color: #94a3b8; font-size: 13px; margin: 0;">Tem dúvidas? Clique no botão abaixo para acessar o menu de ajuda.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary-button" data-close>Fechar</button>
+        <button type="button" class="primary-button" id="goToHelpBtn">📖 Ir para "Tenho Dúvida"</button>
+      </div>
+    </div>
+  </div>
 
   <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 </body>

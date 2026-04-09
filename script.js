@@ -43,27 +43,13 @@ const defaultCategories = [
   { id: 'outros', name: 'Outros', type: 'both', icon: '📦', subcategories: ['...'], limit: 0, preset: true }
 ];
 
-const initialTransactions = [
-  { id: createId(), date: '2026-01-01', category: 'outros', subcategory: 'Saldo', type: 'income', description: 'Saldo Inicial', value: 1000.0, payment: 'Saldo', status: 'paid' },
-  { id: createId(), date: '2026-01-05', category: 'salario', subcategory: 'Salário', type: 'income', description: 'Pagamento Mensal', value: 5000.0, payment: 'Pix', status: 'paid' },
-  { id: createId(), date: '2026-01-10', category: 'moradia', subcategory: 'Aluguel', type: 'expense', description: 'Aluguel', value: 1200.0, payment: 'Boleto', status: 'paid' },
-  { id: createId(), date: '2026-01-15', category: 'alimentacao', subcategory: 'Mercado', type: 'expense', description: 'Compras do Mês', value: 800.0, payment: 'Cartão', status: 'paid' },
-  { id: createId(), date: '2026-01-20', category: 'transporte', subcategory: 'Gasolina', type: 'expense', description: 'Combustível', value: 200.0, payment: 'Pix', status: 'paid' },
-  { id: createId(), date: '2026-01-25', category: 'lazer', subcategory: 'Lanches', type: 'expense', description: 'Restaurante', value: 100.0, payment: 'Cartão', status: 'paid' },
-  { id: createId(), date: '2026-01-28', category: 'saude', subcategory: 'Farmácia', type: 'expense', description: 'Remédios', value: 50.0, payment: 'Dinheiro', status: 'paid' }
-];
 
-const defaultFixedExpenses = [
-  { id: createId(), description: 'Aluguel', category: 'moradia', value: 600.0, day: 5, active: true, type: 'fixed', duration: null, startMonth: null },
-  { id: createId(), description: 'Internet', category: 'telefonia', value: 70.0, day: 20, active: true, type: 'fixed', duration: null, startMonth: null },
-  { id: createId(), description: 'Financiamento Carro', category: 'outros', value: 700, day: 10, active: true, type: 'fixed', duration: null, startMonth: null }
-];
 
 let state = {
   settings: { ...defaultSettings },
   categories: [...defaultCategories],
-  transactions: [...initialTransactions],
-  fixedExpenses: [...defaultFixedExpenses],
+  transactions: [],
+  fixedExpenses: [],
   deletedItems: [], // Trash bin para recuperação de dados deletados
   sort: { key: 'date', order: 'desc' },
   pagination: { page: 1, pageSize: 10 },
@@ -80,7 +66,10 @@ const charts = {
   topExpenses: null,
   reportCategory: null,
   reportMonthly: null,
-  reportPayment: null
+  reportPayment: null,
+  purchaseProjection: null,
+  balanceProjection: null,
+  savingsGoal: null
 };
 
 const labelsMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -376,80 +365,103 @@ const notificationSystem = {
 // ==================== FASE 12: EXPORTAÇÃO AVANÇADA ====================
 
 const exportManager = {
-  exportToExcel: (year, month) => {
-    const transactions = state.transactions.filter(t => {
-      const date = new Date(t.date);
-      return date.getFullYear() === year && date.getMonth() + 1 === month;
-    });
+  exportToExcel: (year) => {
+    const transactions = state.transactions.filter(t => new Date(t.date).getFullYear() === year);
 
     let csv = 'Data,Categoria,Subcategoria,Tipo,Descrição,Valor,Pagamento,Status\n';
-    
+
     transactions.forEach(t => {
       const category = getCategory(t.category);
       const categoryName = category ? category.name : t.category;
       const type = t.type === 'income' ? 'Entrada' : 'Saída';
       const status = t.status === 'paid' ? 'Pago' : t.status === 'pending' ? 'Pendente' : 'Agendado';
       
-      csv += `"${t.date}","${categoryName}","${t.subcategory || '-'}","${type}","${t.description}","${t.value.toFixed(2)}","${t.payment || '-'}","${status}"\n`;
+      csv += `"${t.date}","${categoryName}","${t.subcategory || '-'}","${type}","${t.description}","${t.value.toFixed(2)}","${t.payment || '-'}","${status}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    const monthName = labelsMonths[month - 1];
-    link.download = `LuminaFin-${monthName}-${year}.csv`;
+    link.download = `LuminaFin-${year}.csv`;
     link.click();
     showToast('✓ Arquivo CSV exportado com sucesso!', 'success');
   },
 
-  generatePDFContent: (year, month) => {
-    const monthName = labelsMonths[month - 1];
-    const income = sumByPeriod(year, month, 'income');
-    const expense = sumByPeriod(year, month, 'expense');
-    const balance = income - expense;
+  generatePDFContent: (year) => {
+    const monthNames = ['Ano todo', ...labelsMonths];
+    const totalIncome = state.transactions.filter(t => new Date(t.date).getFullYear() === year && t.type === 'income').reduce((sum, t) => sum + t.value, 0);
+    const totalExpense = state.transactions.filter(t => new Date(t.date).getFullYear() === year && t.type === 'expense').reduce((sum, t) => sum + t.value, 0);
+    const balance = totalIncome - totalExpense;
+    const forecast = renderForecastData(year);
 
-    let content = `
-LuminaFin - RELATÓRIO FINANCEIRO
-${monthName} de ${year}
-
-=======================================================
-RESUMO DO MÊS
-=======================================================
-Entradas: ${formatCurrency(income)}
-Saídas: ${formatCurrency(expense)}
-Saldo: ${formatCurrency(balance)}
-
-=======================================================
-TRANSAÇÕES DETALHADAS
-=======================================================
-`;
-
-    state.transactions
-      .filter(t => {
-        const date = new Date(t.date);
-        return date.getFullYear() === year && date.getMonth() + 1 === month;
-      })
+    let rows = state.transactions
+      .filter(t => new Date(t.date).getFullYear() === year)
       .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .forEach(t => {
+      .map(t => {
         const category = getCategory(t.category);
         const type = t.type === 'income' ? '+ Entrada' : '- Saída';
-        content += `\n${t.date} | ${type} | ${category?.name || t.category} | ${formatCurrency(t.value)}\n${t.description}\n`;
-      });
+        return `<tr><td>${t.date}</td><td>${type}</td><td>${category?.name || t.category}</td><td>${sanitizeHtml(t.description)}</td><td>${formatCurrency(t.value)}</td></tr>`;
+      }).join('');
 
-    return content;
+    let projectionRows = forecast.map((item) => `
+      <tr>
+        <td>${labelsMonths[item.month - 1]}/${item.year}</td>
+        <td>${formatCurrency(item.projectedIncome)}</td>
+        <td>${formatCurrency(item.projectedExpense)}</td>
+        <td>${formatCurrency(item.projectedBalance)}</td>
+      </tr>
+    `).join('');
+
+    return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Relatório LuminaFin ${year}</title>
+  <style>
+    body { font-family: Inter, sans-serif; margin: 24px; color: #111; }
+    h1,h2,h3 { margin: 0 0 16px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { padding: 10px; border: 1px solid #d1d5db; text-align: left; }
+    th { background: #0ea5e9; color: #fff; }
+    .summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 16px; }
+    .summary-card { padding: 16px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1>LuminaFin</h1>
+  <h2>Relatório anual ${year}</h2>
+  <div class="summary">
+    <div class="summary-card"><strong>Receitas</strong><p>${formatCurrency(totalIncome)}</p></div>
+    <div class="summary-card"><strong>Despesas</strong><p>${formatCurrency(totalExpense)}</p></div>
+    <div class="summary-card"><strong>Saldo</strong><p>${formatCurrency(balance)}</p></div>
+    <div class="summary-card"><strong>Projeção média</strong><p>${formatCurrency(forecast.reduce((sum, item) => sum + item.projectedBalance, 0) / Math.max(forecast.length, 1))}</p></div>
+  </div>
+  <h3>Transações</h3>
+  <table>
+    <thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Valor</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <h3>Projeções futuras</h3>
+  <table>
+    <thead><tr><th>Período</th><th>Receitas</th><th>Despesas</th><th>Saldo projetado</th></tr></thead>
+    <tbody>${projectionRows}</tbody>
+  </table>
+</body>
+</html>`;
   },
 
-  downloadPDF: (year, month) => {
-    const content = exportManager.generatePDFContent(year, month);
-    const monthName = labelsMonths[month - 1];
-    
-    // Criar arquivo de texto simulando PDF (para compatibilidade)
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `LuminaFin-${monthName}-${year}.txt`;
-    link.click();
-    showToast('✓ Relatório gerado (formato texto, para PDF use navegador: Ctrl+P)', 'info');
+  downloadPDF: (year) => {
+    const content = exportManager.generatePDFContent(year);
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast('Não foi possível abrir a janela de impressão. Verifique o bloqueador de pop-ups.', 'error');
+      return;
+    }
+    printWindow.document.write(content);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    showToast('✓ Relatório pronto para salvar como PDF via impressão do navegador.', 'info');
   }
 };
 
@@ -922,6 +934,10 @@ function analyzeSeasonality(year, type = 'expense') {
  */
 function forecastNextMonths(year, month, type = 'expense', months = 3) {
   const trend = calculateTrend(year, month, type);
+  const lastMonth = month === 1 ? sumByPeriod(year - 1, 12, type) : sumByPeriod(year, month - 1, type);
+  const prevMonth = month <= 2 ? sumByPeriod(year - 1, 12 - (2 - month), type) : sumByPeriod(year, month - 2, type);
+  const momentum = prevMonth ? (lastMonth - prevMonth) * 0.2 : 0;
+  const basePrediction = Math.max(0, trend + momentum);
   const forecast = [];
   
   for (let i = 1; i <= months; i++) {
@@ -932,15 +948,388 @@ function forecastNextMonths(year, month, type = 'expense', months = 3) {
       y += 1;
     }
     
+    const growthFactor = 1 + (i - 1) * 0.02;
+    const predicted = Math.round((basePrediction * growthFactor) * 100) / 100;
     forecast.push({
       month: m,
       year: y,
-      predicted: trend,
-      variation: (Math.random() - 0.5) * trend * 0.2 // Variação de +/- 10%
+      predicted,
+      variation: prevMonth ? Math.round(((predicted - lastMonth) / Math.max(lastMonth, 1)) * 100 * 10) / 10 : 0
     });
   }
   
   return forecast;
+}
+
+function renderForecastData(year, months = 3) {
+  const today = new Date();
+  const currentMonth = year === today.getFullYear() ? today.getMonth() + 1 : 12;
+  const incomeForecast = forecastNextMonths(year, currentMonth, 'income', months);
+  const expenseForecast = forecastNextMonths(year, currentMonth, 'expense', months);
+
+  return incomeForecast.map((item, index) => {
+    const expenseItem = expenseForecast[index] || { predicted: 0 };
+    return {
+      month: item.month,
+      year: item.year,
+      projectedIncome: item.predicted,
+      projectedExpense: expenseItem.predicted,
+      projectedBalance: Math.round((item.predicted - expenseItem.predicted) * 100) / 100
+    };
+  });
+}
+
+function calculateAverageMonthly(type, months = 3) {
+  const today = new Date();
+  let currentMonth = today.getMonth() + 1;
+  let currentYear = today.getFullYear();
+  const values = [];
+  for (let i = 0; i < months; i++) {
+    let month = currentMonth - i;
+    let year = currentYear;
+    if (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+    values.push(sumByPeriod(year, month, type));
+  }
+  const average = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+  return Math.round(average * 100) / 100;
+}
+
+function calculateCurrentBalance() {
+  const balance = state.transactions.reduce((sum, item) => {
+    return sum + (item.type === 'income' ? item.value : -item.value);
+  }, 0);
+  return Math.round(balance * 100) / 100;
+}
+
+function calculatePurchaseProjection({ amount, installments = 1, monthlyIncome, monthlyExpense }) {
+  const income = typeof monthlyIncome === 'number' && monthlyIncome >= 0 ? monthlyIncome : calculateAverageMonthly('income', 3);
+  const expense = typeof monthlyExpense === 'number' && monthlyExpense >= 0 ? monthlyExpense : calculateAverageMonthly('expense', 3);
+  const monthlyNet = Math.round((income - expense) * 100) / 100;
+  const installmentValue = Math.round((amount / Math.max(installments, 1)) * 100) / 100;
+  const remainingBudget = Math.round((monthlyNet - installmentValue) * 100) / 100;
+  return {
+    amount,
+    installments,
+    income,
+    expense,
+    monthlyNet,
+    installmentValue,
+    remainingBudget,
+    canAfford: remainingBudget >= 0,
+    currentBalance: calculateCurrentBalance(),
+    totalCost: amount,
+    status: remainingBudget >= 0 ? 'Compra compatível com o orçamento mensal estimado.' : 'Atenção: compra deixa o orçamento mensal negativo.',
+    upfrontStatus: installments === 1
+      ? (calculateCurrentBalance() >= amount ? 'Saldo atual suficiente para pagar à vista.' : 'Saldo atual pode não ser suficiente para pagar à vista.')
+      : ''
+  };
+}
+
+function renderPurchaseProjection() {
+  if (!dom.purchaseProjectionResult) return;
+  const amount = parseFloat(dom.purchaseValue?.value) || 0;
+  const installments = Math.max(1, Number(dom.purchaseInstallments?.value) || 1);
+  const monthlyIncome = dom.purchaseMonthlyIncome?.value.trim() === '' ? NaN : parseFloat(dom.purchaseMonthlyIncome?.value);
+  const monthlyExpense = dom.purchaseMonthlyExpense?.value.trim() === '' ? NaN : parseFloat(dom.purchaseMonthlyExpense?.value);
+  
+  // Obter saldo atual automaticamente
+  const currentBalance = calculateCurrentBalance();
+
+  if (amount <= 0) {
+    dom.purchaseProjectionResult.innerHTML = '<div>Nenhum valor de compra informado.</div>';
+    if (charts.purchaseProjection) {
+      charts.purchaseProjection.destroy();
+      charts.purchaseProjection = null;
+    }
+    return;
+  }
+
+  const projection = calculatePurchaseProjection({
+    amount,
+    installments,
+    monthlyIncome: !isNaN(monthlyIncome) ? monthlyIncome : undefined,
+    monthlyExpense: !isNaN(monthlyExpense) ? monthlyExpense : undefined
+  });
+
+  // Calcular saldo após a compra e análises elaboradas
+  const balanceAfterPurchase = currentBalance - amount;
+  const emergencyFund = (projection.expense * 3);
+  const minSafeBalance = projection.expense * 1;
+  const monthsOfCoverageAfterPurchase = projection.remainingBudget > 0 ? (balanceAfterPurchase / projection.expense) : 0;
+  const recoveryMonths = balanceAfterPurchase < 0 ? Math.ceil(Math.abs(balanceAfterPurchase) / Math.max(projection.remainingBudget, 1)) : 0;
+  
+  const balanceHealthColor = balanceAfterPurchase >= 0 ? '#16a34a' : '#dc2626';
+  const balanceHealthStatus = balanceAfterPurchase >= 0 ? '✅ Saldo positivo' : '🚨 Saldo ficará negativo';
+  const recoveryStatus = recoveryMonths > 0 ? `<div style="color: #f59e0b;">⏱️ Recuperação em aprox. ${recoveryMonths} meses</div>` : '';
+
+  dom.purchaseProjectionResult.innerHTML = `
+    <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--accent); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+      <div><strong>💰 Análise de Impacto Financeiro</strong></div>
+      <div style="margin-top: 0.75rem;"><strong>Saldo atual:</strong> <span style="font-size: 1.1rem; color: ${currentBalance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(currentBalance)}</span></div>
+      <div style="margin-top: 0.5rem;"><strong>Valor da compra:</strong> <span style="font-size: 1.1rem; color: #f59e0b;">${formatCurrency(amount)}</span></div>
+      <div style="margin-top: 0.5rem; font-size: 1.2rem; font-weight: 700; background: rgba(${balanceAfterPurchase >= 0 ? '22, 197, 94' : '239, 68, 68'}, 0.2); padding: 0.75rem; border-radius: 6px;">
+        <strong>Saldo final:</strong> <span style="color: ${balanceHealthColor};">${formatCurrency(balanceAfterPurchase)}</span>
+      </div>
+      <div style="margin-top: 0.5rem; color: ${balanceHealthColor}; font-weight: 600;">${balanceHealthStatus}</div>
+      ${recoveryStatus}
+    </div>
+    
+    <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
+      <div><strong>📊 Detalhamento Financeiro</strong></div>
+      <div style="margin-top: 0.75rem;"><strong>Parcelas:</strong> ${projection.installments}x de ${formatCurrency(projection.installmentValue)}</div>
+      <div><strong>Renda mensal:</strong> ${formatCurrency(projection.income)}</div>
+      <div><strong>Despesa mensal:</strong> ${formatCurrency(projection.expense)}</div>
+      <div><strong>Superávit mensal atual:</strong> ${formatCurrency(projection.remainingBudget)}</div>
+      <div><strong>% da renda em parcela:</strong> ${((projection.installmentValue / projection.income) * 100).toFixed(1)}%</div>
+      <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Cobertura de despesas:</strong> ${monthsOfCoverageAfterPurchase.toFixed(1)} meses</div>
+      <div><strong>Fundo de emergência ideal:</strong> ${formatCurrency(emergencyFund)}</div>
+      <div><strong>Gap para emergência:</strong> <span style="color: ${(balanceAfterPurchase - emergencyFund) >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(Math.max(0, emergencyFund - balanceAfterPurchase))}</span></div>
+    </div>
+    
+    <div style="font-weight:600; color:${projection.canAfford ? '#16a34a' : '#dc2626'}; margin-top: 1rem;">${projection.status}</div>
+    ${projection.upfrontStatus ? `<div style="margin-top: 0.5rem;">${projection.upfrontStatus}</div>` : ''}
+  `;
+
+  // Render chart com saldo atual incluído
+  const chartData = {
+    labels: ['Saldo Atual', 'Renda Mensal', 'Gastos Mensais', 'Parcela da Compra', 'Saldo Restante'],
+    datasets: [{
+      label: 'Valor (R$)',
+      data: [currentBalance, projection.income, projection.expense, projection.installmentValue, Math.max(0, projection.remainingBudget)],
+      backgroundColor: [
+        currentBalance >= 0 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)', // green or red for current balance
+        'rgba(34, 197, 94, 0.8)', // green for income
+        'rgba(239, 68, 68, 0.8)', // red for expenses
+        'rgba(245, 158, 11, 0.8)', // orange for installment
+        projection.remainingBudget >= 0 ? 'rgba(59, 130, 246, 0.8)' : 'rgba(220, 38, 38, 0.8)' // blue or red for remaining
+      ],
+      borderColor: [
+        currentBalance >= 0 ? 'rgba(34, 197, 94, 1)' : 'rgba(239, 68, 68, 1)',
+        'rgba(34, 197, 94, 1)',
+        'rgba(239, 68, 68, 1)',
+        'rgba(245, 158, 11, 1)',
+        projection.remainingBudget >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(220, 38, 38, 1)'
+      ],
+      borderWidth: 1
+    }]
+  };
+
+  // Generate insights
+  let insights = [];
+  
+  // Aviso sobre saldo negativo
+  if (currentBalance < 0) {
+    insights.push('🚨 Seu saldo atual é negativo! Comprar agora aumentará ainda mais o débito');
+  } else if (balanceAfterPurchase < 0) {
+    insights.push('⚠️ A compra deixará seu saldo negativo - considere aguardar ou reduzir o valor');
+  } else if (balanceAfterPurchase < 1000) {
+    insights.push('💡 A compra deixará pouco saldo. Mantenha uma reserva de emergência');
+  }
+
+  const budgetPercentage = (projection.installmentValue / projection.income) * 100;
+  if (budgetPercentage > 30) {
+    insights.push('⚠️ Parcela representa mais de 30% da renda - considere reduzir parcelas');
+  } else if (budgetPercentage <= 10) {
+    insights.push('✅ Parcela confortável (menos de 10% da renda)');
+  }
+
+  if (projection.remainingBudget < 500) {
+    insights.push('💰 Saldo restante apertado - revise orçamento mensal');
+  }
+
+  if (projection.installments > 12) {
+    insights.push('📅 Muitas parcelas - considere prazo menor para reduzir juros');
+  }
+
+  if (insights.length === 0) {
+    insights.push('🎯 Compra parece adequada ao seu perfil financeiro');
+  }
+
+  dom.purchaseInsightsContent.innerHTML = insights.map(insight => `<div>${insight}</div>`).join('');
+
+  // Render chart
+  charts.purchaseProjection = renderChart(charts.purchaseProjection, dom.chartPurchaseProjection, {
+    type: 'bar',
+    data: chartData,
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.label}: ${formatCurrency(context.parsed.y)}`;
+            }
+          }
+        }
+      },
+      scales: chartScaleOptions()
+    }
+  });
+}
+
+function calculateBalanceProjection({ startBalance, monthlyIncome, monthlyExpense, months }) {
+  const balance = typeof startBalance === 'number' && !Number.isNaN(startBalance) ? startBalance : calculateCurrentBalance();
+  const income = typeof monthlyIncome === 'number' && monthlyIncome >= 0 ? monthlyIncome : calculateAverageMonthly('income', 3);
+  const expense = typeof monthlyExpense === 'number' && monthlyExpense >= 0 ? monthlyExpense : calculateAverageMonthly('expense', 3);
+  const horizon = Math.max(1, Math.round(months));
+  const monthlyNet = Math.round((income - expense) * 100) / 100;
+  const projectedBalance = Math.round((balance + monthlyNet * horizon) * 100) / 100;
+  return { balance, income, expense, horizon, monthlyNet, projectedBalance };
+}
+
+function renderProjectionDashboard() {
+  if (!dom.projectionDashboard) return;
+
+  const avgIncome = calculateAverageMonthly('income', 3);
+  const avgExpense = calculateAverageMonthly('expense', 3);
+  const savingsCapacity = Math.max(0, avgIncome - avgExpense);
+
+  const sixMonthProjection = calculateBalanceProjection({
+    months: 6,
+    monthlyIncome: avgIncome,
+    monthlyExpense: avgExpense
+  }).projectedBalance;
+
+  const safeInstallmentLimit = Math.max(0, (avgIncome * 0.3) - avgExpense); // 30% da renda para parcelas
+
+  if (dom.savingsCapacity) dom.savingsCapacity.textContent = formatCurrency(savingsCapacity);
+  if (dom.sixMonthProjection) dom.sixMonthProjection.textContent = formatCurrency(sixMonthProjection);
+  if (dom.safeInstallmentLimit) dom.safeInstallmentLimit.textContent = formatCurrency(safeInstallmentLimit);
+}
+
+function renderBalanceProjection() {
+  if (!dom.balanceProjectionResult) return;
+  const startBalance = dom.balanceStartValue?.value.trim() === '' ? NaN : parseFloat(dom.balanceStartValue?.value);
+  const balanceMonthlyIncome = dom.balanceMonthlyIncome?.value.trim() === '' ? NaN : parseFloat(dom.balanceMonthlyIncome?.value);
+  const balanceMonthlyExpense = dom.balanceMonthlyExpense?.value.trim() === '' ? NaN : parseFloat(dom.balanceMonthlyExpense?.value);
+  const months = Number(dom.balanceProjectionMonths?.value) || 6;
+
+  const projection = calculateBalanceProjection({
+    startBalance: !isNaN(startBalance) ? startBalance : undefined,
+    monthlyIncome: !isNaN(balanceMonthlyIncome) ? balanceMonthlyIncome : undefined,
+    monthlyExpense: !isNaN(balanceMonthlyExpense) ? balanceMonthlyExpense : undefined,
+    months
+  });
+
+  // Análises elaboradas
+  const savingsRate = (projection.monthlyNet / projection.income) * 100;
+  const emergencyFund = projection.expense * 3;
+  const monthlyRatio = projection.balance / projection.expense;
+  const projectedRatio = projection.projectedBalance / projection.expense;
+  const breakEvenMonth = projection.monthlyNet >= 0 ? null : Math.ceil(projection.balance / Math.abs(projection.monthlyNet));
+  const excessBudget = projection.monthlyNet > 0 ? projection.monthlyNet : 0;
+  const deficitBudget = projection.monthlyNet < 0 ? Math.abs(projection.monthlyNet) : 0;
+
+  const healthStatus = projection.projectedBalance >= 0 ? '✅ Projeção positiva' : '🚨 Projeção negativa';
+  const healthColor = projection.projectedBalance >= 0 ? '#16a34a' : '#dc2626';
+  const trenddDirection = projection.monthlyNet > 0 ? '📈 Crescimento' : projection.monthlyNet < 0 ? '📉 Declínio' : '→ Estabilidade';
+
+  dom.balanceProjectionResult.innerHTML = `
+    <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--accent); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+      <div><strong>💰 Posição Financeira Atual</strong></div>
+      <div style="margin-top: 0.75rem;"><strong>Saldo inicial:</strong> <span style="font-size: 1.1rem; color: ${projection.balance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(projection.balance)}</span></div>
+      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> <span style="color: ${monthlyRatio >= 3 ? '#22c55e' : monthlyRatio >= 1 ? '#f59e0b' : '#ef4444'};">${monthlyRatio.toFixed(1)}x</span> (${(monthlyRatio * 30).toFixed(0)} dias)</div>
+    </div>
+
+    <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
+      <div><strong>📊 Fluxo Financeiro Mensal</strong></div>
+      <div style="margin-top: 0.75rem;"><strong>Receita mensal:</strong> <span style="color: #22c55e;">${formatCurrency(projection.income)}</span></div>
+      <div><strong>Despesa mensal:</strong> <span style="color: #ef4444;">${formatCurrency(projection.expense)}</span></div>
+      <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Saldo líquido mensal:</strong> <span style="font-size: 1.1rem; color: ${projection.monthlyNet >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(projection.monthlyNet)}</span></div>
+      <div><strong>Taxa de economia:</strong> <span style="color: ${savingsRate >= 20 ? '#22c55e' : savingsRate >= 10 ? '#f59e0b' : '#ef4444'};">${savingsRate.toFixed(1)}%</span></div>
+      <div style="margin-top: 0.5rem;"><strong>Tendência:</strong> <span>${trenddDirection}</span></div>
+    </div>
+
+    <div style="margin-top: 1rem; padding: 1rem; background: rgba(${projection.projectedBalance >= 0 ? '34, 197, 94' : '239, 68, 68'}, 0.1); border-left: 4px solid ${healthColor}; border-radius: 8px;">
+      <div><strong>🔮 Projeção em ${projection.horizon} ${projection.horizon === 1 ? 'mês' : 'meses'}</strong></div>
+      <div style="margin-top: 0.75rem; font-size: 1.2rem; font-weight: 700; color: ${healthColor};">Saldo final: ${formatCurrency(projection.projectedBalance)}</div>
+      <div style="margin-top: 0.5rem; color: ${healthColor}; font-weight: 600;">${healthStatus}</div>
+      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> ${projectedRatio.toFixed(1)}x (${(projectedRatio * 30).toFixed(0)} dias)</div>
+      ${breakEvenMonth ? `<div style="margin-top: 0.25rem; color: #ef4444;"><strong>⚠️ Saldo zera em:</strong> ${breakEvenMonth} meses</div>` : ''}
+      <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Fundo de emergência ideal:</strong> ${formatCurrency(emergencyFund)}</div>
+      <div><strong>Gap para emergência:</strong> <span style="color: ${projection.projectedBalance >= emergencyFund ? '#22c55e' : '#ef4444'};">${formatCurrency(Math.max(0, emergencyFund - projection.projectedBalance))}</span></div>
+    </div>
+  `;
+
+  // Generate balance evolution data
+  const balanceData = [];
+  let currentBalance = projection.balance;
+  for (let i = 0; i <= projection.horizon; i++) {
+    balanceData.push(currentBalance);
+    if (i < projection.horizon) {
+      currentBalance += projection.monthlyNet;
+    }
+  }
+
+  const labels = ['Mês Atual'];
+  for (let i = 1; i <= projection.horizon; i++) {
+    labels.push(`Mês ${i}`);
+  }
+
+  const chartData = {
+    labels: labels,
+    datasets: [{
+      label: 'Saldo Projetado',
+      data: balanceData,
+      borderColor: projection.projectedBalance >= 0 ? 'rgba(34, 197, 94, 1)' : 'rgba(239, 68, 68, 1)',
+      backgroundColor: projection.projectedBalance >= 0 ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+      fill: true,
+      tension: 0.4,
+      pointRadius: 6,
+      pointHoverRadius: 8
+    }]
+  };
+
+  // Generate insights
+  let insights = [];
+
+  if (projection.projectedBalance < 0) {
+    insights.push('🚨 Projeção negativa - revise receitas ou corte despesas');
+  } else if (projection.projectedBalance > projection.balance * 2) {
+    insights.push('📈 Crescimento saudável do saldo');
+  }
+
+  if (savingsRate > 20) {
+    insights.push('💪 Taxa de poupança excelente (>20%)');
+  } else if (savingsRate < 10 && savingsRate > 0) {
+    insights.push('⚖️ Taxa de poupança moderada - considere otimizar');
+  } else if (savingsRate <= 0) {
+    insights.push('⚠️ Gastos superiores às receitas - reveja orçamento');
+  }
+
+  const monthsToDouble = projection.monthlyNet > 0 ? Math.ceil((projection.balance * 2) / projection.monthlyNet) : 0;
+  if (monthsToDouble > 0 && monthsToDouble <= 12) {
+    insights.push(`⏱️ Saldo dobrará em ${monthsToDouble} ${monthsToDouble === 1 ? 'mês' : 'meses'}`);
+  }
+
+  if (insights.length === 0) {
+    insights.push('📊 Situação financeira estável');
+  }
+
+  dom.balanceInsightsContent.innerHTML = insights.map(insight => `<div>${insight}</div>`).join('');
+
+  charts.balanceProjection = renderChart(charts.balanceProjection, dom.chartBalanceProjection, {
+    type: 'line',
+    data: chartData,
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#f8fafc' } },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
+            }
+          }
+        }
+      },
+      scales: chartScaleOptions()
+    }
+  });
 }
 
 /**
@@ -1275,7 +1664,8 @@ const testSuite = {
     
     const passed = testSuite.results.filter(r => r.status === 'pass').length;
     const failed = testSuite.results.filter(r => r.status === 'fail').length;
-    console.log(`%c\n🏁 Resumo: ${passed} passed, ${failed} failed`, 'font-size: 12px; font-weight: bold');
+    console.log(`%c
+🏁 Resumo: ${passed} passed, ${failed} failed`, 'font-size: 12px; font-weight: bold');
     console.groupEnd();
   }
 };
@@ -1447,8 +1837,8 @@ function loadState() {
     state = {
       settings: { ...defaultSettings },
       categories: [...defaultCategories],
-      transactions: [...initialTransactions],
-      fixedExpenses: [...defaultFixedExpenses],
+      transactions: [],
+      fixedExpenses: [],
       deletedItems: [],
       sort: { key: 'date', order: 'desc' },
       pagination: { page: 1, pageSize: 10 },
@@ -1463,8 +1853,8 @@ function loadState() {
     state = {
       settings: { ...defaultSettings, ...(parsed.settings || {}) },
       categories: Array.isArray(parsed.categories) ? parsed.categories : [...defaultCategories],
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [...initialTransactions],
-      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [...defaultFixedExpenses],
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
       deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
       sort: parsed.sort || { key: 'date', order: 'desc' },
       pagination: parsed.pagination || { page: 1, pageSize: 10 },
@@ -1599,6 +1989,55 @@ function showDangerConfirmModal(title, warningText, confirmWord, callback) {
   modal.classList.add('active');
 }
 
+// ==================== FUNÇÕES DE TUTORIAL/ONBOARDING ====================
+
+/**
+ * Mostra o modal de tutorial na primeira vez (se não houver transações)
+ */
+function showTutorialIfFirstTime() {
+  const tutorialShown = localStorage.getItem('LuminaFin-tutorialShown');
+  const hasTransactions = state.transactions.length > 0;
+  
+  if (!tutorialShown && !hasTransactions) {
+    const tutorialModal = document.getElementById('tutorialModal');
+    if (tutorialModal) {
+      localStorage.setItem('LuminaFin-tutorialShown', 'true');
+      tutorialModal.classList.add('active');
+      
+      // Conectar botão "Ir para Tenho Dúvida"
+      const goToHelpBtn = document.getElementById('goToHelpBtn');
+      if (goToHelpBtn) {
+        goToHelpBtn.addEventListener('click', () => {
+          closeTutorialModal();
+          navigateToHelp();
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Fecha o modal de tutorial
+ */
+function closeTutorialModal() {
+  const tutorialModal = document.getElementById('tutorialModal');
+  if (tutorialModal) {
+    tutorialModal.classList.remove('active');
+  }
+}
+
+/**
+ * Navega para a seção de ajuda/Tenho Dúvida
+ */
+function navigateToHelp() {
+  const helpLink = document.querySelector('[data-target="help"]');
+  if (helpLink) {
+    helpLink.click();
+  }
+}
+
+// ==================== FIM FUNÇÕES DE TUTORIAL/ONBOARDING ====================
+
 // ==================== FIM FUNÇÕES DE SEGURANÇA ====================
 
 
@@ -1645,6 +2084,30 @@ function init() {
     chartReportMonthly: document.getElementById('chartReportMonthly'),
     chartReportPayment: document.getElementById('chartReportPayment'),
     reportTopIncomeMonth: document.getElementById('reportTopIncomeMonth'),
+    projectionSummary: document.getElementById('projectionSummary'),
+    projectionList: document.getElementById('projectionList'),
+    purchaseValue: document.getElementById('purchaseValue'),
+    purchaseInstallments: document.getElementById('purchaseInstallments'),
+    purchaseMonthlyIncome: document.getElementById('purchaseMonthlyIncome'),
+    purchaseMonthlyExpense: document.getElementById('purchaseMonthlyExpense'),
+    calculatePurchaseProjectionButton: document.getElementById('calculatePurchaseProjection'),
+    purchaseProjectionResult: document.getElementById('purchaseProjectionResult'),
+    balanceStartValue: document.getElementById('balanceStartValue'),
+    balanceMonthlyIncome: document.getElementById('balanceMonthlyIncome'),
+    balanceMonthlyExpense: document.getElementById('balanceMonthlyExpense'),
+    balanceProjectionMonths: document.getElementById('balanceProjectionMonths'),
+    calculateBalanceProjectionButton: document.getElementById('calculateBalanceProjection'),
+    balanceProjectionResult: document.getElementById('balanceProjectionResult'),
+    chartPurchaseProjection: document.getElementById('chartPurchaseProjection'),
+    chartBalanceProjection: document.getElementById('chartBalanceProjection'),
+    purchaseInsights: document.getElementById('purchaseInsights'),
+    purchaseInsightsContent: document.getElementById('purchaseInsightsContent'),
+    balanceInsights: document.getElementById('balanceInsights'),
+    balanceInsightsContent: document.getElementById('balanceInsightsContent'),
+    projectionDashboard: document.getElementById('projectionDashboard'),
+    savingsCapacity: document.getElementById('savingsCapacity'),
+    sixMonthProjection: document.getElementById('sixMonthProjection'),
+    safeInstallmentLimit: document.getElementById('safeInstallmentLimit'),
     limitTableBody: document.querySelector('#limitTable tbody'),
     rawDataEditor: document.getElementById('rawDataEditor'),
     themeBg: document.getElementById('themeBg'),
@@ -1653,7 +2116,21 @@ function init() {
     themeAccent: document.getElementById('themeAccent'),
     themeToggle: document.getElementById('themeToggle'),
     toastContainer: document.getElementById('toastContainer'),
-    fixedCategory: document.getElementById('fixedCategory')
+    fixedCategory: document.getElementById('fixedCategory'),
+    fixedTotalSummary: document.getElementById('fixedTotalSummary'),
+    // Novos elementos para funcionalidades avançadas
+    monthlySavingsGoal: document.getElementById('monthlySavingsGoal'),
+    goalDeadline: document.getElementById('goalDeadline'),
+    setSavingsGoal: document.getElementById('setSavingsGoal'),
+    savingsGoalProgress: document.getElementById('savingsGoalProgress'),
+    chartSavingsGoal: document.getElementById('chartSavingsGoal'),
+    emergencyFund3Months: document.getElementById('emergencyFund3Months'),
+    expenseIncrease20Percent: document.getElementById('expenseIncrease20Percent'),
+    incomeReduction15Percent: document.getElementById('incomeReduction15Percent'),
+    scenarioName: document.getElementById('scenarioName'),
+    scenarioDescription: document.getElementById('scenarioDescription'),
+    saveCurrentScenario: document.getElementById('saveCurrentScenario'),
+    savedScenarios: document.getElementById('savedScenarios')
   };
 
   loadState();
@@ -1676,6 +2153,7 @@ function init() {
   addFocusIndicators();
   
   // PHASE 10: Registrar Service Worker e PWA
+  showTutorialIfFirstTime();
   registerServiceWorker();
   setupPWAInstallPrompt();
 }
@@ -1686,16 +2164,23 @@ function buildNavigation() {
       dom.navLinks.forEach((nav) => nav.classList.remove('active'));
       button.classList.add('active');
       const target = button.dataset.target;
-      
+
       // Mostrar aviso ao acessar admin
       if (target === 'admin') {
         showAdminWarning();
       }
-      
+
       document.querySelectorAll('.page-panel').forEach((panel) => {
         panel.classList.toggle('active', panel.id === target);
       });
       dom.pageTitle.textContent = button.textContent.trim();
+
+      // Renderizar página específica se necessário
+      if (target === 'reports') {
+        renderReportPage();
+      } else if (target === 'help') {
+        renderHelpPage();
+      }
     });
   });
 }
@@ -2117,6 +2602,9 @@ function renderCategoryTable() {
 
 function renderFixedTable() {
   const today = new Date();
+  const totalFixed = state.fixedExpenses.reduce((sum, item) => sum + item.value, 0);
+  if (dom.fixedTotalSummary) dom.fixedTotalSummary.textContent = formatCurrency(totalFixed);
+
   // PHASE 2: Sanitizar dados renderizados
   dom.fixedTableBody.innerHTML = state.fixedExpenses.map((item) => {
     const category = getCategory(item.category);
@@ -2156,7 +2644,142 @@ function renderReportPage() {
   renderTopExpenses(year);
   renderTopIncomeMonth(year);
   renderHeatmap(year);
+  renderProjections(year);
+  renderProjectionDashboard();
+  renderPurchaseProjection();
+  renderBalanceProjection();
+  // Novas funcionalidades
+  renderSavingsGoalProgress();
+  renderRiskAnalysis();
+  renderTrendAnalysis();
+  renderSavedScenarios();
+  checkSmartAlerts();
   saveState();
+}
+
+function renderHelpPage() {
+  // Função para renderizar comentários dinâmicos
+  // Você pode adicionar comentários aqui conforme surgirem dúvidas
+  const comments = [
+    // Exemplo de comentário:
+    // {
+    //   title: "Como exportar dados?",
+    //   content: "Para exportar seus dados, vá na seção Administrativo e clique em 'Backup'. Isso criará um arquivo JSON com todos os seus dados.",
+    //   date: "2024-01-15"
+    // }
+    {
+      title: "Excluir vários dados de uma vez",
+      content: "Para excluir vários dados de uma vez, selecione-os utilizando a caixa de seleção e clique no botão 'Excluir Selecionados' no painel Administrativo.",
+      date: "2026-04-09"
+    },
+    {
+      title: "Backup e restauração de dados",
+      content: "Para criar um backup dos seus dados, vá na seção lateral e clique em 'Backup'. Isso criará um arquivo JSON com todos os seus dados. Para restaurar os dados, utilize o botão 'Importar backup JSON' no painel Administrativo.",
+      date: "2026-04-09"
+    },
+    {
+      title: "Os dados são armazenados localmente?",
+      content: "Sim, seus dados são armazenados localmente em seu navegador. Isso garante a privacidade e o controle sobre suas informações financeiras.",
+      date: "2026-04-09"
+    }
+  ];
+
+  const commentsContainer = document.getElementById('helpComments');
+  if (commentsContainer && comments.length > 0) {
+    const commentsHtml = comments.map(comment => `
+      <div class="comment-item" style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 12px; padding: 1rem; margin-bottom: 1rem;">
+        <h6 style="margin: 0 0 0.5rem 0; color: var(--accent);">${comment.title}</h6>
+        <p style="margin: 0 0 0.5rem 0; color: var(--text);">${comment.content}</p>
+        <small style="color: var(--muted);">${comment.date}</small>
+      </div>
+    `).join('');
+
+    commentsContainer.innerHTML = commentsHtml;
+  }
+}
+
+function renderProjections(year) {
+  const forecast = renderForecastData(year, 3);
+  const summaryElement = document.getElementById('projectionSummary');
+  const listElement = document.getElementById('projectionList');
+
+  if (!summaryElement || !listElement) return;
+
+  const totalIncome = forecast.reduce((sum, item) => sum + item.projectedIncome, 0);
+  const totalExpense = forecast.reduce((sum, item) => sum + item.projectedExpense, 0);
+  const totalBalance = forecast.reduce((sum, item) => sum + item.projectedBalance, 0);
+  const avgMonthlyNet = totalBalance / forecast.length;
+  const savingsRate = totalIncome > 0 ? ((totalBalance / totalIncome) * 100) : 0;
+  
+  // Análise de tendência ao longo dos meses
+  let negativeMonths = 0;
+  let cumulativeBalance = forecast.length > 0 ? forecast[0].projectedBalance : 0;
+  forecast.forEach((item, index) => {
+    if (item.projectedBalance < 0) negativeMonths++;
+  });
+
+  const summaryColor = totalBalance >= 0 ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+  const summaryBorderColor = totalBalance >= 0 ? '#16a34a' : '#dc2626';
+
+  summaryElement.innerHTML = `
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+      <div style="background: ${summaryColor}; border-left: 4px solid ${summaryBorderColor}; padding: 1rem; border-radius: 8px;">
+        <div style="color: #94a3b8; font-size: 0.9rem;">Total de Receita</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #22c55e; margin-top: 0.5rem;">${formatCurrency(totalIncome)}</div>
+        <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">Média: ${formatCurrency(totalIncome / forecast.length)}/mês</div>
+      </div>
+      <div style="background: rgba(239, 68, 68, 0.1); border-left: 4px solid #dc2626; padding: 1rem; border-radius: 8px;">
+        <div style="color: #94a3b8; font-size: 0.9rem;">Total de Despesa</div>
+        <div style="font-size: 1.5rem; font-weight: 700; color: #ef4444; margin-top: 0.5rem;">${formatCurrency(totalExpense)}</div>
+        <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">Média: ${formatCurrency(totalExpense / forecast.length)}/mês</div>
+      </div>
+      <div style="background: ${summaryColor}; border-left: 4px solid ${summaryBorderColor}; padding: 1rem; border-radius: 8px;">
+        <div style="color: #94a3b8; font-size: 0.9rem;">Saldo Projetado Total</div>
+        <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.5rem; color: ${summaryBorderColor};">${formatCurrency(totalBalance)}</div>
+        <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">Taxa de economia: ${savingsRate.toFixed(1)}%</div>
+      </div>
+    </div>
+    <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
+      <div><strong>⚠️ Análise de Risco</strong></div>
+      <div style="margin-top: 0.5rem;">Meses com projeção negativa: <span style="color: ${negativeMonths > 0 ? '#ef4444' : '#22c55e'}; font-weight: 600;">${negativeMonths}/${forecast.length}</span></div>
+      <div style="margin-top: 0.25rem;">Saldo mensal médio: <span style="color: ${avgMonthlyNet >= 0 ? '#22c55e' : '#ef4444'}; font-weight: 600;">${formatCurrency(avgMonthlyNet)}</span></div>
+    </div>
+  `;
+
+  listElement.innerHTML = forecast.map((item, index) => {
+    const monthBalance = item.projectedBalance;
+    const isNegative = monthBalance < 0;
+    const bgColor = isNegative ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)';
+    const label = `${labelsMonths[item.month - 1]} ${item.year}`;
+    const monthlyNet = item.projectedIncome - item.projectedExpense;
+    const daysOfCoverage = item.projectedExpense > 0 ? (monthBalance / item.projectedExpense * 30).toFixed(0) : 0;
+    
+    return `<div class="projection-row" style="background: ${bgColor}; padding: 1rem; margin-bottom: 0.5rem; border-radius: 8px; border-left: 4px solid ${isNegative ? '#dc2626' : '#16a34a'};">
+      <div style="font-weight: 700; margin-bottom: 0.75rem;">${label}</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem;">
+        <div>
+          <span style="color: #94a3b8; font-size: 0.9rem;">Receita:</span>
+          <span style="color: #22c55e; font-weight: 600;">${formatCurrency(item.projectedIncome)}</span>
+        </div>
+        <div>
+          <span style="color: #94a3b8; font-size: 0.9rem;">Despesa:</span>
+          <span style="color: #ef4444; font-weight: 600;">${formatCurrency(item.projectedExpense)}</span>
+        </div>
+        <div>
+          <span style="color: #94a3b8; font-size: 0.9rem;">Saldo mês:</span>
+          <span style="color: ${monthlyNet >= 0 ? '#22c55e' : '#ef4444'}; font-weight: 600;">${formatCurrency(monthlyNet)}</span>
+        </div>
+        <div>
+          <span style="color: #94a3b8; font-size: 0.9rem;">Saldo acumulado:</span>
+          <span style="font-weight: 600; color: ${isNegative ? '#ef4444' : '#16a34a'};">${formatCurrency(monthBalance)}</span>
+        </div>
+        <div>
+          <span style="color: #94a3b8; font-size: 0.9rem;">Cobertura:</span>
+          <span style="color: ${daysOfCoverage >= 60 ? '#22c55e' : daysOfCoverage >= 30 ? '#f59e0b' : '#ef4444'}; font-weight: 600;">${daysOfCoverage} dias</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function renderAnnualCategoryReport(year) {
@@ -2315,8 +2938,8 @@ function handleBackupImport(event) {
       state = {
         settings: parsed.settings || defaultSettings,
         categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
-        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : initialTransactions,
-        fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : defaultFixedExpenses,
+        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+        fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
         sort: parsed.sort || state.sort,
         pagination: parsed.pagination || state.pagination,
         filters: parsed.filters || state.filters,
@@ -2425,6 +3048,14 @@ function attachEventListeners() {
     calcCache.clear();
     renderReportPage();
   });
+  if (dom.calculatePurchaseProjectionButton) dom.calculatePurchaseProjectionButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    renderPurchaseProjection();
+  });
+  if (dom.calculateBalanceProjectionButton) dom.calculateBalanceProjectionButton.addEventListener('click', (event) => {
+    event.preventDefault();
+    renderBalanceProjection();
+  });
   
   if (document.getElementById('openAddTransaction')) document.getElementById('openAddTransaction').addEventListener('click', () => openTransactionModal());
   if (document.getElementById('openAddInitialBalance')) document.getElementById('openAddInitialBalance').addEventListener('click', () => openInitialBalanceModal());
@@ -2437,7 +3068,6 @@ function attachEventListeners() {
   if (document.getElementById('clearTransactionsButton')) document.getElementById('clearTransactionsButton').addEventListener('click', clearAllTransactions);
   if (document.getElementById('clearCategoriesButton')) document.getElementById('clearCategoriesButton').addEventListener('click', clearPersonalizedCategories);
   if (document.getElementById('clearFixedExpensesButton')) document.getElementById('clearFixedExpensesButton').addEventListener('click', clearFixedExpenses);
-  if (document.getElementById('loadDemoButton')) document.getElementById('loadDemoButton').addEventListener('click', loadDemoData);
   if (document.getElementById('backupButton')) document.getElementById('backupButton').addEventListener('click', backupData);
   if (document.getElementById('installAppButton')) document.getElementById('installAppButton').addEventListener('click', installApp);
   if (document.getElementById('makeBackupFromWarning')) document.getElementById('makeBackupFromWarning').addEventListener('click', () => {
@@ -2459,7 +3089,6 @@ function attachEventListeners() {
   window.addEventListener('resize', () => {
     if (window.innerWidth > 1100) closeMobileMenu();
   });
-  if (document.getElementById('resetDataButton')) document.getElementById('resetDataButton').addEventListener('click', loadDemoData);
   if (dom.themeBg) dom.themeBg.addEventListener('input', updateThemeColor);
   if (dom.themeHeader) dom.themeHeader.addEventListener('input', updateThemeColor);
   if (dom.themeCard) dom.themeCard.addEventListener('input', updateThemeColor);
@@ -3056,7 +3685,7 @@ function applyFixedExpenses() {
 }
 
 function exportReport(format) {
-  const year = Number(dom.reportYear.value);
+  const year = dom.reportYear.value === 'all' ? new Date().getFullYear() : Number(dom.reportYear.value);
   const filteredTransactions = state.transactions.filter((item) => new Date(item.date).getFullYear() === year);
   
   if (filteredTransactions.length === 0) {
@@ -3065,12 +3694,12 @@ function exportReport(format) {
   }
 
   if (format === 'csv') {
-    exportManager.exportToExcel(filteredTransactions, `relatorio-${year}.csv`);
+    exportManager.exportToExcel(year);
     return;
   }
 
   if (format === 'pdf') {
-    exportManager.downloadPDF(filteredTransactions, `Relatório ${year}`);
+    exportManager.downloadPDF(year);
     return;
   }
 }
@@ -3121,40 +3750,6 @@ function clearAllTransactions() {
   }, 1500);
 }
 
-function loadDemoData() {
-  performAutomaticBackup();
-  setTimeout(() => {
-    showDangerConfirmModal(
-      '⚠️ Restaurar dados de exemplo?',
-      'Esta ação substituirá TODOS os seus dados atuais pelos dados de exemplo. Seus dados atuais serão perdidos (mas um backup foi criado automaticamente). Esta ação NÃO PODE SER DESFEITA!',
-      'CARREGAR DADOS DE EXEMPLO',
-      () => {
-        state = {
-          settings: { ...defaultSettings },
-          categories: [...defaultCategories],
-          transactions: [...initialTransactions],
-          fixedExpenses: [...defaultFixedExpenses],
-          sort: { key: 'date', order: 'desc' },
-          pagination: { page: 1, pageSize: 10 },
-          filters: { year: 2026, month: 4, type: 'all', search: '', category: 'all' },
-          reportYear: 2026
-        };
-        saveState();
-        applyTheme();
-        populateSelects();
-        renderDashboard();
-        renderTransactionTable();
-        renderCategoryTable();
-        renderFixedTable();
-        renderReportPage();
-        renderLimitsTable();
-        updateRawEditor();
-        showToast('✓ Dados de exemplo carregados com sucesso.', 'success');
-      }
-    );
-  }, 1500);
-}
-
 function backupData() {
   const dataStr = JSON.stringify(state, null, 2);
   const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
@@ -3191,8 +3786,8 @@ function applyRawJson() {
     state = {
       settings: parsed.settings || defaultSettings,
       categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : initialTransactions,
-      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : defaultFixedExpenses,
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
       sort: parsed.sort || state.sort,
       pagination: parsed.pagination || state.pagination,
       filters: parsed.filters || state.filters,
@@ -3270,7 +3865,718 @@ function clearFixedExpenses() {
   }, 1500);
 }
 
+// ==================== NOVAS FUNCIONALIDADES: CENÁRIOS, METAS E ANÁLISE DE RISCO ====================
+
+// Estado para cenários salvos e metas
+let scenarios = JSON.parse(localStorage.getItem('luminafin_scenarios') || '[]');
+let savingsGoals = JSON.parse(localStorage.getItem('luminafin_goals') || '[]');
+
+// Sistema de abas nos relatórios
+function initReportTabs() {
+  const tabButtons = document.querySelectorAll('.tab-button');
+  const tabContents = document.querySelectorAll('.tab-content');
+
+  tabButtons.forEach(button => {
+    button.addEventListener('click', () => {
+      // Remove active class from all buttons and contents
+      tabButtons.forEach(btn => btn.classList.remove('active'));
+      tabContents.forEach(content => content.classList.remove('active'));
+
+      // Add active class to clicked button and corresponding content
+      button.classList.add('active');
+      const tabId = button.dataset.tab;
+      document.getElementById(`${tabId}-tab`).classList.add('active');
+    });
+  });
+}
+
+// Renderizar cenários salvos
+function renderSavedScenarios() {
+  const container = dom.savedScenarios;
+  if (!container) return;
+
+  if (scenarios.length === 0) {
+    container.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 2rem;">Nenhum cenário salvo ainda.</div>';
+    return;
+  }
+
+  container.innerHTML = scenarios.map((scenario, index) => `
+    <div class="scenario-item">
+      <h5>${scenario.name}</h5>
+      <p>${scenario.description}</p>
+      <div class="scenario-actions">
+        <button class="secondary-button" onclick="loadScenario(${index})">Carregar</button>
+        <button class="danger-button" onclick="deleteScenario(${index})">Excluir</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Salvar cenário atual
+function saveCurrentScenario() {
+  const name = dom.scenarioName.value.trim();
+  const description = dom.scenarioDescription.value.trim();
+
+  if (!name) {
+    showToast('Nome do cenário é obrigatório.', 'error');
+    return;
+  }
+
+  const scenario = {
+    name,
+    description,
+    date: new Date().toISOString(),
+    data: {
+      transactions: [...state.transactions],
+      fixedExpenses: [...state.fixedExpenses],
+      categories: [...state.categories],
+      settings: { ...state.settings }
+    }
+  };
+
+  scenarios.push(scenario);
+  localStorage.setItem('luminafin_scenarios', JSON.stringify(scenarios));
+
+  dom.scenarioName.value = '';
+  dom.scenarioDescription.value = '';
+
+  renderSavedScenarios();
+  showToast('Cenário salvo com sucesso!', 'success');
+}
+
+// Carregar cenário
+function loadScenario(index) {
+  const scenario = scenarios[index];
+  if (!scenario) return;
+
+  // Confirmar carregamento
+  if (!confirm(`Carregar cenário "${scenario.name}"? Isso substituirá os dados atuais.`)) {
+    return;
+  }
+
+  // Aplicar dados do cenário
+  state.transactions = [...scenario.data.transactions];
+  state.fixedExpenses = [...scenario.data.fixedExpenses];
+  state.categories = [...scenario.data.categories];
+  state.settings = { ...scenario.data.settings };
+
+  saveState();
+  applyTheme();
+  rebuildCategoryDropdowns();
+  renderDashboard();
+  renderTransactionTable();
+  renderCategoryTable();
+  renderFixedTable();
+  renderReportPage();
+
+  showToast(`Cenário "${scenario.name}" carregado!`, 'success');
+}
+
+// Excluir cenário
+function deleteScenario(index) {
+  if (!confirm('Excluir este cenário permanentemente?')) return;
+
+  scenarios.splice(index, 1);
+  localStorage.setItem('luminafin_scenarios', JSON.stringify(scenarios));
+  renderSavedScenarios();
+  showToast('Cenário excluído.', 'success');
+}
+
+// Sistema de metas de poupança
+function setSavingsGoal() {
+  const monthlyGoal = parseFloat(dom.monthlySavingsGoal.value);
+  const deadline = parseInt(dom.goalDeadline.value);
+
+  if (!monthlyGoal || monthlyGoal <= 0) {
+    showToast('Meta mensal deve ser maior que zero.', 'error');
+    return;
+  }
+
+  const goal = {
+    id: createId(),
+    monthlyGoal,
+    deadline,
+    startDate: new Date().toISOString(),
+    currentProgress: 0
+  };
+
+  savingsGoals = [goal]; // Apenas uma meta ativa por vez
+  localStorage.setItem('luminafin_goals', JSON.stringify(savingsGoals));
+
+  dom.monthlySavingsGoal.value = '';
+  dom.goalDeadline.value = 12;
+
+  renderSavingsGoalProgress();
+  showToast('Meta de poupança definida!', 'success');
+}
+
+function renderSavingsGoalProgress() {
+  const container = dom.savingsGoalProgress;
+  if (!container) return;
+
+  if (savingsGoals.length === 0) {
+    container.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 2rem;">Nenhuma meta definida.</div>';
+    return;
+  }
+
+  const goal = savingsGoals[0];
+  const monthsElapsed = Math.floor((new Date() - new Date(goal.startDate)) / (1000 * 60 * 60 * 24 * 30));
+  const targetAmount = goal.monthlyGoal * goal.deadline;
+  const currentSavings = calculateCurrentSavings();
+
+  const progressPercent = Math.min(100, (currentSavings / targetAmount) * 100);
+  const remainingMonths = Math.max(0, goal.deadline - monthsElapsed);
+  const monthlyNeeded = remainingMonths > 0 ? (targetAmount - currentSavings) / remainingMonths : 0;
+
+  container.innerHTML = `
+    <div style="background: rgba(31, 41, 55, 0.5); padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h4 style="margin: 0; color: var(--accent);">🎯 Progresso da Meta</h4>
+        <span style="font-size: 0.9rem; color: var(--muted);">${monthsElapsed}/${goal.deadline} meses</span>
+      </div>
+
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: ${progressPercent}%"></div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+        <div>
+          <div style="font-size: 0.8rem; color: var(--muted);">Meta mensal</div>
+          <div style="font-size: 1.1rem; font-weight: 600; color: var(--accent);">${formatCurrency(goal.monthlyGoal)}</div>
+        </div>
+        <div>
+          <div style="font-size: 0.8rem; color: var(--muted);">Valor guardado</div>
+          <div style="font-size: 1.1rem; font-weight: 600; color: var(--success);">${formatCurrency(currentSavings)}</div>
+        </div>
+        <div>
+          <div style="font-size: 0.8rem; color: var(--muted);">Meta total</div>
+          <div style="font-size: 1.1rem; font-weight: 600;">${formatCurrency(targetAmount)}</div>
+        </div>
+        <div>
+          <div style="font-size: 0.8rem; color: var(--muted);">Precisa por mês</div>
+          <div style="font-size: 1.1rem; font-weight: 600; color: ${monthlyNeeded > goal.monthlyGoal ? 'var(--danger)' : 'var(--success)'};">${formatCurrency(monthlyNeeded)}</div>
+        </div>
+      </div>
+
+      ${progressPercent >= 100 ? '<div class="alert-banner alert-success" style="margin-top: 1rem;"><i class="fa-solid fa-trophy"></i> Parabéns! Meta atingida! 🎉</div>' : ''}
+    </div>
+  `;
+}
+
+function calculateCurrentSavings() {
+  // Calcular poupança baseada em saldo positivo acumulado nos últimos meses
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+
+  let totalSavings = 0;
+  for (let month = 1; month <= currentMonth; month++) {
+    const monthlyBalance = calculateMonthlyBalance(currentYear, month);
+    if (monthlyBalance > 0) {
+      totalSavings += monthlyBalance;
+    }
+  }
+
+  return totalSavings;
+}
+
+// Análise de risco financeiro
+function renderRiskAnalysis() {
+  const currentBalance = calculateCurrentBalance();
+  const avgMonthlyIncome = calculateAverageMonthlyIncome();
+  const avgMonthlyExpense = calculateAverageMonthlyExpense();
+  const monthlyNet = avgMonthlyIncome - avgMonthlyExpense;
+
+  // Análise de saúde financeira
+  const emergencyFundNeeded = avgMonthlyExpense * 3;
+  const emergencyGap = Math.max(0, emergencyFundNeeded - currentBalance);
+  const hasEmergencyFund = currentBalance >= emergencyFundNeeded;
+  
+  // Cenário: 20% aumento nos gastos
+  const expenseIncrease20 = avgMonthlyIncome - (avgMonthlyExpense * 1.2);
+  const expenseIncrease20Balance = currentBalance + (expenseIncrease20 * 6);
+  const expenseIncrease20Impact = avgMonthlyExpense * 0.2;
+  
+  // Cenário: 15% redução na renda
+  const incomeReduction15 = (avgMonthlyIncome * 0.85) - avgMonthlyExpense;
+  const incomeReduction15Balance = currentBalance + (incomeReduction15 * 6);
+  const incomeReduction15Impact = avgMonthlyIncome * 0.15;
+  
+  // Cenário: Pior caso (redução de 10% renda + aumento de 10% gastos)
+  const worstCaseMonthly = (avgMonthlyIncome * 0.9) - (avgMonthlyExpense * 1.1);
+  const worstCaseBalance = currentBalance + (worstCaseMonthly * 6);
+
+  // Preenchimento dos elementos
+  dom.emergencyFund3Months.textContent = formatCurrency(emergencyFundNeeded);
+  dom.expenseIncrease20Percent.textContent = formatCurrency(expenseIncrease20);
+  dom.incomeReduction15Percent.textContent = formatCurrency(incomeReduction15);
+
+  // Criar análise visual elaborada
+  const analysisContainer = document.getElementById('riskAnalysisDetails');
+  if (analysisContainer) {
+    const emerStatus = hasEmergencyFund ? 'Adequado' : 'Insuficiente';
+    const emerColor = hasEmergencyFund ? '#22c55e' : '#ef4444';
+    const exp20Color = expenseIncrease20 >= 0 ? '#22c55e' : '#ef4444';
+    const inc15Color = incomeReduction15 >= 0 ? '#22c55e' : '#ef4444';
+    const exp20Health = expenseIncrease20 >= 0 ? 'Sustentável' : 'Crítica';
+    const inc15Months = incomeReduction15 >= 0 ? 'Indefinido' : Math.ceil(currentBalance / Math.abs(incomeReduction15));
+    const worstCaseColor = worstCaseMonthly >= 0 ? '#22c55e' : '#ef4444';
+    const worstCaseRisk = worstCaseMonthly < 0 ? 'ALTO' : 'BAIXO';
+    const worstCaseEmoji = worstCaseMonthly < -1000 ? '🔴' : worstCaseMonthly < 0 ? '🟡' : '🟢';
+    const worstCaseLevel = worstCaseMonthly < -1000 ? 'Risco crítico' : worstCaseMonthly < 0 ? 'Risco moderado' : 'Risco baixo';
+    const daysCoverage = (currentBalance / avgMonthlyExpense * 30).toFixed(0);
+    const emergencyMsg = hasEmergencyFund ? 'Fundo de emergência adequado' : `Acumule ${formatCurrency(emergencyGap)} para fundo`;
+    const emergencyEmoji = hasEmergencyFund ? '✅' : '⚠️';
+
+    analysisContainer.innerHTML = `
+      <div style=\"margin-top: 1.5rem;\">
+        <h4 style=\"margin-bottom: 1rem; color: var(--accent);\">Análise Detalhada de Cenários</h4>
+        
+        <div style=\"display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;\">
+          <div style=\"background: rgba(56, 189, 248, 0.1); border-left: 4px solid #38bdf8; padding: 1rem; border-radius: 8px;\">
+            <div style=\"color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;\">Cenário Atual</div>
+            <div style=\"font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;\">Saldo: <span style=\"color: ${currentBalance >= 0 ? '#22c55e' : '#ef4444'};\">${formatCurrency(currentBalance)}</span></div>
+            <div style=\"font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;\">Fluxo mensal: <span style=\"color: ${monthlyNet >= 0 ? '#22c55e' : '#ef4444'};\">${formatCurrency(monthlyNet)}</span></div>
+            <div style=\"font-size: 0.85rem; color: #cbd5e1;\">Fundo emergência: <span style=\"font-weight: 600; color: ${emerColor};\">${emerStatus}</span></div>
+            <div style=\"margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;\">
+              <span style=\"color: #94a3b8;\">Cobertura:</span> <span style=\"font-weight: 600; color: #f59e0b;\">${daysCoverage} dias</span>
+            </div>
+          </div>
+          
+          <div style=\"background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 8px;\">
+            <div style=\"color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;\">+20% nos Gastos</div>
+            <div style=\"font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;\">Fluxo: <span style=\"color: ${exp20Color};\">${formatCurrency(expenseIncrease20)}</span></div>
+            <div style=\"font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;\">Impacto: <span style=\"color: #ef4444;\">-${formatCurrency(expenseIncrease20Impact)}</span>/mês</div>
+            <div style=\"font-size: 0.85rem; color: #cbd5e1;\">Saldo 6 meses: <span style=\"font-weight: 600; color: ${expenseIncrease20Balance >= 0 ? '#22c55e' : '#ef4444'};\">${formatCurrency(expenseIncrease20Balance)}</span></div>
+            <div style=\"margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;\">
+              <span style=\"color: #94a3b8;\">Status:</span> <span style=\"font-weight: 600; color: ${exp20Color};\">${exp20Health}</span>
+            </div>
+          </div>
+          
+          <div style=\"background: rgba(239, 68, 68, 0.1); border-left: 4px solid #dc2626; padding: 1rem; border-radius: 8px;\">
+            <div style=\"color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;\">-15% na Renda</div>
+            <div style=\"font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;\">Fluxo: <span style=\"color: ${inc15Color};\">${formatCurrency(incomeReduction15)}</span></div>
+            <div style=\"font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;\">Impacto: <span style=\"color: #ef4444;\">-${formatCurrency(incomeReduction15Impact)}</span>/mês</div>
+            <div style=\"font-size: 0.85rem; color: #cbd5e1;\">Saldo 6 meses: <span style=\"font-weight: 600; color: ${incomeReduction15Balance >= 0 ? '#22c55e' : '#ef4444'};\">${formatCurrency(incomeReduction15Balance)}</span></div>
+            <div style=\"margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;\">
+              <span style=\"color: #94a3b8;\">Crise em:</span> <span style=\"font-weight: 600; color: ${inc15Color};\">${inc15Months}</span>
+            </div>
+          </div>
+          
+          <div style=\"background: rgba(107, 114, 128, 0.2); border-left: 4px solid #6b7280; padding: 1rem; border-radius: 8px;\">
+            <div style=\"color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;\">Pior Caso (-10% renda, +10% despesa)</div>
+            <div style=\"font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;\">Fluxo: <span style=\"color: ${worstCaseColor};\">${formatCurrency(worstCaseMonthly)}</span></div>
+            <div style=\"font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;\">Risco: <span style=\"color: ${worstCaseColor}; font-weight: 600;\">${worstCaseRisk}</span></div>
+            <div style=\"font-size: 0.85rem; color: #cbd5e1;\">Saldo 6 meses: <span style=\"font-weight: 600; color: ${worstCaseBalance >= 0 ? '#f59e0b' : '#ef4444'};\">${formatCurrency(worstCaseBalance)}</span></div>
+            <div style=\"margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;\">
+              <span style=\"color: #94a3b8;\">${worstCaseEmoji} ${worstCaseLevel}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div style=\"background: rgba(100, 116, 139, 0.1); padding: 1rem; border-radius: 8px;\">
+          <div style=\"color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.75rem;\">Recomendações Estratégicas</div>
+          <div style=\"display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem;\">
+            <div>${emergencyEmoji} ${emergencyMsg}</div>
+            <div>${expenseIncrease20 >= 0 ? '✅ Resiste a aumentos moderados' : '❌ Reduza gastos ou aumente renda'}</div>
+            <div>${monthlyNet > 0 ? '✅ Superávit de ' + formatCurrency(monthlyNet) + '/mês' : '🚨 Déficit de ' + formatCurrency(Math.abs(monthlyNet)) + '/mês'}</div>
+            <div>${currentBalance >= emergencyFundNeeded * 0.5 ? '✅ Situação estável' : '⚠️ Reforce reserva'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Adicionar indicadores visuais de risco
+  updateRiskIndicators(currentBalance, emergencyFundNeeded, expenseIncrease20, incomeReduction15);
+}
+
+function updateRiskIndicators(balance, emergencyFund, expenseScenario, incomeScenario) {
+  // Indicadores de risco baseados nos cálculos
+  const riskElements = [
+    { element: dom.emergencyFund3Months, value: balance, threshold: emergencyFund, type: 'fund' },
+    { element: dom.expenseIncrease20Percent, value: expenseScenario, threshold: 0, type: 'balance' },
+    { element: dom.incomeReduction15Percent, value: incomeScenario, threshold: 0, type: 'balance' }
+  ];
+
+  riskElements.forEach(({ element, value, threshold, type }) => {
+    const parent = element.closest('.scenario-card');
+    if (!parent) return;
+
+    // Remove classes de risco anteriores
+    parent.classList.remove('risk-low', 'risk-medium', 'risk-high');
+
+    if (type === 'fund') {
+      if (value >= threshold) {
+        parent.classList.add('risk-low');
+      } else if (value >= threshold * 0.5) {
+        parent.classList.add('risk-medium');
+      } else {
+        parent.classList.add('risk-high');
+      }
+    } else {
+      if (value >= 500) {
+        parent.classList.add('risk-low');
+      } else if (value >= 0) {
+        parent.classList.add('risk-medium');
+      } else {
+        parent.classList.add('risk-high');
+      }
+    }
+  });
+}
+
+// Alertas inteligentes
+function checkSmartAlerts() {
+  const alerts = [];
+
+  // Verificar projeções negativas
+  const projectionData = getProjectedBalanceTrend(6);
+  const negativeMonths = projectionData.filter(item => item.balance < 0);
+
+  if (negativeMonths.length > 0) {
+    alerts.push({
+      type: 'danger',
+      message: `Projeção negativa detectada em ${negativeMonths.length} meses. Considere reduzir gastos.`,
+      icon: '📉'
+    });
+  }
+
+  // Verificar limites de categoria ultrapassados
+  const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
+
+  state.categories.forEach(category => {
+    if (category.limit > 0) {
+      const spent = state.transactions
+        .filter(t => t.type === 'expense' && t.category === category.id &&
+                new Date(t.date).getFullYear() === currentYear &&
+                new Date(t.date).getMonth() + 1 === currentMonth)
+        .reduce((sum, t) => sum + t.value, 0);
+
+      const usagePercent = (spent / category.limit) * 100;
+
+      if (usagePercent >= 100) {
+        alerts.push({
+          type: 'danger',
+          message: `Limite da categoria "${category.name}" ultrapassado (${usagePercent.toFixed(0)}%).`,
+          icon: '🚨'
+        });
+      } else if (usagePercent >= state.settings.notifyOnLimitReached) {
+        alerts.push({
+          type: 'warning',
+          message: `Categoria "${category.name}" atingiu ${usagePercent.toFixed(0)}% do limite.`,
+          icon: '⚠️'
+        });
+      }
+    }
+  });
+
+  // Verificar baixo saldo
+  const currentBalance = calculateCurrentBalance();
+  const avgExpense = calculateAverageMonthlyExpense();
+
+  if (currentBalance < avgExpense * 0.5) {
+    alerts.push({
+      type: 'warning',
+      message: 'Saldo baixo detectado. Menos de 0.5x suas despesas médias.',
+      icon: '💰'
+    });
+  }
+
+  // Mostrar alertas
+  displayAlerts(alerts);
+}
+
+function displayAlerts(alerts) {
+  const container = document.getElementById('alertsContainer');
+  if (!container) {
+    // Criar container de alertas se não existir
+    const alertsDiv = document.createElement('div');
+    alertsDiv.id = 'alertsContainer';
+    alertsDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 1000; max-width: 400px;';
+    document.body.appendChild(alertsDiv);
+  }
+
+  const alertsContainer = document.getElementById('alertsContainer');
+
+  alerts.forEach((alert, index) => {
+    setTimeout(() => {
+      const alertElement = document.createElement('div');
+      alertElement.className = `alert-banner alert-${alert.type}`;
+      alertElement.innerHTML = `
+        <i class="fa-solid fa-exclamation-triangle"></i>
+        <span>${alert.icon} ${alert.message}</span>
+        <button onclick="this.parentElement.remove()" style="background: none; border: none; color: inherit; cursor: pointer; margin-left: auto;">×</button>
+      `;
+
+      alertsContainer.appendChild(alertElement);
+
+      // Auto-remover após 10 segundos
+      setTimeout(() => {
+        if (alertElement.parentElement) {
+          alertElement.remove();
+        }
+      }, 10000);
+    }, index * 500); // Delay para mostrar alertas sequencialmente
+  });
+}
+
+// Análise de tendências históricas vs projeções
+function renderTrendAnalysis() {
+  const historicalData = getHistoricalBalanceTrend(12);
+  const projectionData = getProjectedBalanceTrend(6);
+
+  // Cálculos de tendência
+  const firstBalance = historicalData.length > 0 ? historicalData[0].balance : 0;
+  const lastBalance = historicalData.length > 0 ? historicalData[historicalData.length - 1].balance : 0;
+  const growthAmount = lastBalance - firstBalance;
+  const growthPercent = firstBalance !== 0 ? (growthAmount / Math.abs(firstBalance)) * 100 : 0;
+  const avgMonthlyGrowth = growthAmount / Math.max(historicalData.length, 1);
+  
+  const finalProjectedBalance = projectionData.length > 0 ? projectionData[projectionData.length - 1].balance : lastBalance;
+  const projectedGrowth = finalProjectedBalance - lastBalance;
+  const projectedGrowthPercent = lastBalance !== 0 ? (projectedGrowth / Math.abs(lastBalance)) * 100 : 0;
+  
+  // Identificar picos e vales
+  const maxBalance = Math.max(...historicalData.map(item => item.balance), lastBalance);
+  const minBalance = Math.min(...historicalData.map(item => item.balance), lastBalance);
+  const volatility = maxBalance - minBalance;
+  
+  // Verificar quando ficar negativo em projeção
+  let negativeMonth = null;
+  for (let i = 0; i < projectionData.length; i++) {
+    if (projectionData[i].balance < 0) {
+      negativeMonth = i + 1;
+      break;
+    }
+  }
+  
+  // Tendência: melhorando ou piorando
+  const recentMonths = historicalData.slice(-3);
+  const recentAvg = recentMonths.length > 0 ? recentMonths.reduce((sum, item) => sum + item.balance, 0) / recentMonths.length : lastBalance;
+  const trendDirection = lastBalance > recentAvg ? 'crescente' : lastBalance < recentAvg ? 'decrescente' : 'estável';
+  const trendColor = lastBalance > recentAvg ? '#22c55e' : lastBalance < recentAvg ? '#ef4444' : '#f59e0b';
+
+  // Criar gráfico comparativo
+  const ctx = dom.chartSavingsGoal?.getContext('2d');
+  if (ctx) {
+    const combinedLabels = [];
+    const combinedData = [];
+
+    // Dados históricos
+    historicalData.forEach(item => {
+      combinedLabels.push(item.label);
+      combinedData.push(item.balance);
+    });
+
+    // Dados projetados
+    projectionData.forEach(item => {
+      combinedLabels.push(`${item.month}/${item.year} (proj.)`);
+      combinedData.push(item.balance);
+    });
+
+    charts.savingsGoal = renderChart(charts.savingsGoal, dom.chartSavingsGoal, {
+      type: 'line',
+      data: {
+        labels: combinedLabels,
+        datasets: [{
+          label: 'Saldo Real',
+          data: historicalData.map(item => item.balance),
+          borderColor: 'rgba(56, 189, 248, 1)',
+          backgroundColor: 'rgba(56, 189, 248, 0.1)',
+          tension: 0.4
+        }, {
+          label: 'Projeção',
+          data: [...Array(historicalData.length).fill(null), ...projectionData.map(item => item.balance)],
+          borderColor: 'rgba(245, 158, 11, 1)',
+          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          borderDash: [5, 5],
+          tension: 0.4
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: '#f8fafc' } },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return `${context.dataset.label}: ${formatCurrency(context.parsed.y)}`;
+              }
+            }
+          }
+        },
+        scales: chartScaleOptions()
+      }
+    });
+  }
+
+  // Análise textual detalhada
+  const analysisContainer = document.getElementById('trendAnalysisDetails');
+  if (analysisContainer) {
+    const volatilityLevel = volatility > lastBalance ? 'Alta' : volatility > lastBalance * 0.5 ? 'Moderada' : 'Baixa';
+    const volatilityColor = volatility > lastBalance ? '#ef4444' : volatility > lastBalance * 0.5 ? '#f59e0b' : '#22c55e';
+    const negativeWarning = negativeMonth ? `Em ${negativeMonth} mês(es)` : 'Não identificado';
+    const negativeColor = negativeMonth ? '#ef4444' : '#22c55e';
+    const pairsCount = Math.floor(historicalData.length / 2);
+    const firstHalf = historicalData.length > 0 ? historicalData[0].balance : 0;
+    const secondHalf = historicalData.length > Math.floor(historicalData.length / 2) ? historicalData[Math.floor(historicalData.length / 2)].balance : 0;
+    const isAccelerating = (lastBalance - secondHalf) > (secondHalf - firstHalf);
+
+    const htmlContent = `
+      <div style="margin-top: 1.5rem;">
+        <h4 style="margin-bottom: 1rem; color: var(--accent);">Análise Detalhada de Tendências</h4>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+          <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid #38bdf8; padding: 1rem; border-radius: 8px;">
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;">Posição Histórica</div>
+            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">Saldo atual: <span style="color: ${lastBalance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(lastBalance)}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;">Crescimento: <span style="color: ${growthAmount >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(growthAmount)} (${growthPercent.toFixed(1)}%)</span></div>
+            <div style="font-size: 0.85rem; color: #cbd5e1;">Média mensal: ${formatCurrency(avgMonthlyGrowth)}</div>
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;">
+              <span style="color: #94a3b8;">Intervalo:</span> ${formatCurrency(minBalance)} até ${formatCurrency(maxBalance)}
+            </div>
+          </div>
+          
+          <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid #a855f7; padding: 1rem; border-radius: 8px;">
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;">Tendência</div>
+            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">Direção: <span style="color: ${trendColor};">${trendDirection}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;">Volatilidade: <span style="color: ${volatilityColor}; font-weight: 600;">${volatilityLevel}</span></div>
+            <div style="font-size: 0.85rem; color: #cbd5e1;">Amplitude: ${formatCurrency(volatility)}</div>
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;">
+              <span style="color: #94a3b8;">Aceleração:</span> <span style="font-weight: 600;">${isAccelerating ? 'Acelerada' : 'Desacelerada'}</span>
+            </div>
+          </div>
+          
+          <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; padding: 1rem; border-radius: 8px;">
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;">Projeção 6 meses</div>
+            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">Saldo final: <span style="color: ${finalProjectedBalance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(finalProjectedBalance)}</span></div>
+            <div style="font-size: 0.9rem; color: #94a3b8; margin-bottom: 0.5rem;">Evolução: <span style="color: ${projectedGrowth >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(projectedGrowth)} (${projectedGrowthPercent.toFixed(1)}%)</span></div>
+            <div style="font-size: 0.85rem; color: #cbd5e1;">Por mês: ${formatCurrency(projectedGrowth / 6)}</div>
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;">
+              <span style="color: #94a3b8;">Ponto crítico:</span> <span style="font-weight: 600; color: ${negativeColor};">${negativeWarning}</span>
+            </div>
+          </div>
+          
+          <div style="background: rgba(100, 116, 139, 0.1); border-left: 4px solid #6b7280; padding: 1rem; border-radius: 8px;">
+            <div style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.5rem;">Saúde Geral</div>
+            <div style="font-size: 0.9rem; color: #cbd5e1; margin-bottom: 0.25rem;">Financeira: <span style="font-weight: 600; color: ${lastBalance > 0 ? '#22c55e' : '#ef4444'};">${lastBalance > 0 ? 'Positiva' : 'Crítica'}</span></div>
+            <div style="font-size: 0.9rem; color: #cbd5e1; margin-bottom: 0.25rem;">Estabilidade: <span style="font-weight: 600;">${volatility < 1000 ? 'Boa' : '⚠️ Instável'}</span></div>
+            <div style="font-size: 0.9rem; color: #cbd5e1; margin-bottom: 0.25rem;">Ritmo: <span style="font-weight: 600;">${Math.abs(avgMonthlyGrowth) > 500 ? 'Rápido' : 'Moderado'}</span></div>
+            <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3); font-size: 0.85rem;">
+              <span style="font-weight: 600;">${lastBalance > 5000 ? '🟢' : lastBalance > 0 ? '🟡' : '🔴'} Status</span>
+            </div>
+          </div>
+        </div>
+        
+        <div style="background: rgba(100, 116, 139, 0.1); padding: 1rem; border-radius: 8px;">
+          <div style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 0.75rem;">Insights e Recomendações</div>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem;">
+            <div>${lastBalance > 0 ? '✅' : '🚨'} ${lastBalance > 0 ? 'Saldo positivo: Estrutura sáudável' : 'Saldo negativo: Ação urgente'}</div>
+            <div>${avgMonthlyGrowth > 0 ? '📈' : '📉'} ${avgMonthlyGrowth > 0 ? 'Trajetória positiva' : 'Tendência negativa'}</div>
+            <div>${volatility < 1000 ? '✅' : '⚠️'} ${volatility < 1000 ? 'Fluxo estável' : 'Fluxo volátil'}</div>
+            <div>${projectedGrowth >= 0 ? '🎯' : '⚠️'} ${projectedGrowth >= 0 ? 'Projeção positiva' : 'Projeção negativa'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    analysisContainer.innerHTML = htmlContent;
+  }
+}
+
+// Funções auxiliares para cálculos
+function calculateAverageMonthlyIncome() {
+  const currentYear = new Date().getFullYear();
+  const monthlyIncomes = [];
+
+  for (let month = 1; month <= 12; month++) {
+    const income = sumByPeriod(currentYear, month, 'income');
+    if (income > 0) monthlyIncomes.push(income);
+  }
+
+  return monthlyIncomes.length > 0 ? monthlyIncomes.reduce((a, b) => a + b, 0) / monthlyIncomes.length : 0;
+}
+
+function calculateAverageMonthlyExpense() {
+  const currentYear = new Date().getFullYear();
+  const monthlyExpenses = [];
+
+  for (let month = 1; month <= 12; month++) {
+    const expense = sumByPeriod(currentYear, month, 'expense');
+    if (expense > 0) monthlyExpenses.push(expense);
+  }
+
+  return monthlyExpenses.length > 0 ? monthlyExpenses.reduce((a, b) => a + b, 0) / monthlyExpenses.length : 0;
+}
+
+function calculateMonthlyBalance(year, month) {
+  const income = sumByPeriod(year, month, 'income');
+  const expense = sumByPeriod(year, month, 'expense');
+  return income - expense;
+}
+
+function getHistoricalBalanceTrend(months) {
+  const data = [];
+  const now = new Date();
+
+  for (let i = months - 1; i >= 0; i--) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+
+    const balance = calculateMonthlyBalance(year, month);
+    data.push({
+      label: `${labelsMonths[month - 1].substring(0, 3)}/${year.toString().substring(2)}`,
+      balance: balance,
+      month,
+      year
+    });
+  }
+
+  return data;
+}
+
+function getProjectedBalanceTrend(months) {
+  const data = [];
+  const now = new Date();
+  const avgIncome = calculateAverageMonthly('income', 3);
+  const avgExpense = calculateAverageMonthly('expense', 3);
+  const monthlyNet = avgIncome - avgExpense;
+  let currentBalance = calculateCurrentBalance();
+
+  for (let i = 1; i <= months; i++) {
+    const date = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+
+    currentBalance += monthlyNet;
+    data.push({
+      label: `${labelsMonths[month - 1].substring(0, 3)}/${year.toString().substring(2)}`,
+      balance: currentBalance,
+      month,
+      year
+    });
+  }
+
+  return data;
+}
+
+// Inicializar novas funcionalidades
+function initNewFeatures() {
+  initReportTabs();
+  renderSavedScenarios();
+  renderSavingsGoalProgress();
+  renderRiskAnalysis();
+  renderTrendAnalysis();
+  checkSmartAlerts();
+
+  // Vincular eventos
+  dom.setSavingsGoal?.addEventListener('click', setSavingsGoal);
+  dom.saveCurrentScenario?.addEventListener('click', saveCurrentScenario);
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   init();
+  initNewFeatures();
 });
-

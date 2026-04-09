@@ -370,7 +370,26 @@
 
 ## 📝 Changelog
 
-### v1.0.0 (Atual)
+### v1.2.0 (Atual)
+- ✅ Dashboard com cards e gráficos
+- ✅ CRUD de lançamentos
+- ✅ CRUD de categorias
+- ✅ Gastos fixos
+- ✅ Relatórios avançados
+- ✅ Tema claro/escuro
+- ✅ Backup/restore
+- ✅ Sistema de cenários salvos
+- ✅ Metas de poupança com progresso
+- ✅ Análise de risco financeiro
+- ✅ Alertas inteligentes
+- ✅ Análise de tendências
+- ✅ Página de ajuda completa
+- ✅ Header fixo no topo
+- ✅ Footer com redes sociais
+- ✅ PWA (Progressive Web App)
+- ✅ Notificações push
+
+### v1.0.0 (Anterior)
 - ✅ Dashboard com cards e gráficos
 - ✅ CRUD de lançamentos
 - ✅ CRUD de categorias
