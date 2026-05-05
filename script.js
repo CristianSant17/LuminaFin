@@ -1004,6 +1004,27 @@ function calculateCurrentBalance() {
   return Math.round(balance * 100) / 100;
 }
 
+/**
+ * Calcula o saldo acumulado até o final do mês anterior ao especificado
+ * @param {number} year - Ano
+ * @param {number} month - Mês (1-12)
+ * @returns {number} Saldo acumulado até o final do mês anterior
+ */
+function calculateBalanceUpToPreviousMonth(year, month) {
+  const previousMonthDate = new Date(year, month - 1, 0); // Último dia do mês anterior
+  
+  const transactionsUpToPreviousMonth = state.transactions.filter((transaction) => {
+    const transactionDate = new Date(transaction.date);
+    return transactionDate <= previousMonthDate;
+  });
+  
+  const balance = transactionsUpToPreviousMonth.reduce((sum, item) => {
+    return sum + (item.type === 'income' ? item.value : -item.value);
+  }, 0);
+  
+  return Math.round(balance * 100) / 100;
+}
+
 function calculatePurchaseProjection({ amount, installments = 1, monthlyIncome, monthlyExpense }) {
   const income = typeof monthlyIncome === 'number' && monthlyIncome >= 0 ? monthlyIncome : calculateAverageMonthly('income', 3);
   const expense = typeof monthlyExpense === 'number' && monthlyExpense >= 0 ? monthlyExpense : calculateAverageMonthly('expense', 3);
@@ -1531,6 +1552,12 @@ const keyboardShortcuts = {
   },
   
   handler: (e) => {
+    // Não ativar atalhos quando o foco estiver em campos de input, textarea ou select
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT')) {
+      return; // Permitir digitação normal nos campos
+    }
+    
     const key = `${e.shiftKey ? 'Shift+' : ''}${e.ctrlKey ? 'Ctrl+' : ''}${e.metaKey ? 'Cmd+' : ''}${e.key.toUpperCase()}`;
     
     switch(key) {
@@ -2332,7 +2359,13 @@ function renderDashboard() {
 
     const incomeTotal = monthlyTransactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
     const expenseTotal = monthlyTransactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
-    const balance = incomeTotal - expenseTotal;
+    
+    // Calcular saldo do mês anterior como base
+    const previousMonthBalance = calculateBalanceUpToPreviousMonth(year, month);
+    
+    // Saldo atual = saldo do mês anterior + receitas do mês - despesas do mês
+    const balance = previousMonthBalance + incomeTotal - expenseTotal;
+    
     const topExpense = monthlyTransactions.filter((item) => item.type === 'expense').reduce((max, item) => Math.max(max, item.value), 0);
     const daysInMonth = new Date(year, month, 0).getDate();
     const average = expenseTotal / Math.max(daysInMonth, 1);
@@ -2345,7 +2378,8 @@ function renderDashboard() {
       balance,
       topExpense,
       average,
-      savedRate
+      savedRate,
+      previousMonthBalance
     };
     
     calcCache.set(cacheKey, dashboardData);
@@ -2353,7 +2387,7 @@ function renderDashboard() {
 
   // Aplicar dados cacheados
   dom.cardBalance.textContent = formatCurrency(dashboardData.balance);
-  dom.cardInitialBalance.textContent = formatCurrency(dashboardData.initialBalance);
+  dom.cardInitialBalance.textContent = formatCurrency(dashboardData.previousMonthBalance);
   dom.cardIncome.textContent = formatCurrency(dashboardData.incomeTotal);
   dom.cardExpense.textContent = formatCurrency(dashboardData.expenseTotal);
   dom.cardTopExpense.textContent = formatCurrency(dashboardData.topExpense);
