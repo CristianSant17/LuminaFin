@@ -85,6 +85,15 @@
             </label>
           </div>
         </div>
+        <div class="goals-section">
+          <div class="goals-header">
+            <h4>Metas de Poupança</h4>
+            <button class="primary-button small" id="addGoalButton"><i class="fa-solid fa-plus"></i> Adicionar Meta</button>
+          </div>
+          <div id="goalsContainer" class="goals-container">
+            <!-- Metas serão renderizadas aqui -->
+          </div>
+        </div>
         <div class="cards-grid">
           <article class="card accent-card">
             <div class="card-content">
@@ -1268,6 +1277,36 @@
         <button type="button" class="secondary-button" data-close>Fechar</button>
         <button type="button" class="primary-button" id="goToHelpBtn">📖 Ir para "Tenho Dúvida"</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add/Edit Goal -->
+  <div class="modal" id="goalModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="goalModalTitle">Nova Meta</h3>
+        <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
+      </header>
+      <form id="goalForm">
+        <div class="form-grid">
+          <label>
+            Nome da Meta
+            <input type="text" id="goalName" required />
+          </label>
+          <label>
+            Valor da Meta
+            <input type="number" id="goalTarget" step="0.01" min="0" required />
+          </label>
+          <label>
+            Cor da Barra
+            <input type="color" id="goalColor" value="#38bdf8" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar Meta</button>
+        </div>
+      </form>
     </div>
   </div>
 

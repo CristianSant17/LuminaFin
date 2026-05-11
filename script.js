@@ -53,8 +53,9 @@ let state = {
   deletedItems: [], // Trash bin para recuperação de dados deletados
   sort: { key: 'date', order: 'desc' },
   pagination: { page: 1, pageSize: 10 },
-  filters: { year: 2026, month: 4, type: 'all', search: '', category: 'all' },
-  reportYear: 2026
+  filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all' },
+  reportYear: 'all',
+  goals: []
 };
 
 let dom = {};
@@ -1869,8 +1870,9 @@ function loadState() {
       deletedItems: [],
       sort: { key: 'date', order: 'desc' },
       pagination: { page: 1, pageSize: 10 },
-      filters: { year: 2026, month: 4, type: 'all', search: '', category: 'all' },
-      reportYear: 2026
+      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all' },
+      reportYear: 'all',
+      goals: []
     };
     saveState();
     return;
@@ -1885,8 +1887,9 @@ function loadState() {
       deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
       sort: parsed.sort || { key: 'date', order: 'desc' },
       pagination: parsed.pagination || { page: 1, pageSize: 10 },
-      filters: parsed.filters || { year: 2026, month: 4, type: 'all', search: '', category: 'all' },
-      reportYear: parsed.reportYear || 2026
+      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || {}) },
+      reportYear: parsed.reportYear || 'all',
+      goals: Array.isArray(parsed.goals) ? parsed.goals : []
     };
     
     // Migrar dados antigos de gastos fixos (compatibilidade)
@@ -2157,7 +2160,16 @@ function init() {
     scenarioName: document.getElementById('scenarioName'),
     scenarioDescription: document.getElementById('scenarioDescription'),
     saveCurrentScenario: document.getElementById('saveCurrentScenario'),
-    savedScenarios: document.getElementById('savedScenarios')
+    savedScenarios: document.getElementById('savedScenarios'),
+    // Goals elements
+    addGoalButton: document.getElementById('addGoalButton'),
+    goalsContainer: document.getElementById('goalsContainer'),
+    goalModal: document.getElementById('goalModal'),
+    goalModalTitle: document.getElementById('goalModalTitle'),
+    goalForm: document.getElementById('goalForm'),
+    goalName: document.getElementById('goalName'),
+    goalTarget: document.getElementById('goalTarget'),
+    goalColor: document.getElementById('goalColor')
   };
 
   loadState();
@@ -2324,9 +2336,14 @@ function rebuildCategoryDropdowns() {
 }
 
 function getCurrentFilters() {
-  const year = dom.dashboardYear.value === 'all' ? new Date().getFullYear() : Number(dom.dashboardYear.value);
-  const month = dom.dashboardMonth.value === 'all' ? new Date().getMonth() + 1 : Number(dom.dashboardMonth.value);
-  return { year, month };
+  const yearValue = dom.dashboardYear.value;
+  const monthValue = dom.dashboardMonth.value;
+  return {
+    yearValue,
+    monthValue,
+    year: yearValue === 'all' ? null : Number(yearValue),
+    month: monthValue === 'all' ? null : Number(monthValue)
+  };
 }
 
 /**
@@ -2336,20 +2353,22 @@ function getCurrentFilters() {
  * @returns {void}
  */
 function renderDashboard() {
-  const { year, month } = getCurrentFilters();
+  const { year, month, yearValue, monthValue } = getCurrentFilters();
   // Save the actual selected values (including 'all')
-  state.filters.year = dom.dashboardYear.value;
-  state.filters.month = dom.dashboardMonth.value;
+  state.filters.year = yearValue;
+  state.filters.month = monthValue;
   saveState();
   
   // Usar cache para cálculos do dashboard
-  const cacheKey = calcCache.key('dashboardData', year, month);
+  const cacheKey = calcCache.key('dashboardData', yearValue, monthValue);
   let dashboardData = calcCache.get(cacheKey);
   
   if (!dashboardData) {
     const monthlyTransactions = state.transactions.filter((transaction) => {
       const date = new Date(transaction.date);
-      return date.getFullYear() === year && date.getMonth() + 1 === month;
+      const yearMatch = year === null || date.getFullYear() === year;
+      const monthMatch = month === null || date.getMonth() + 1 === month;
+      return yearMatch && monthMatch;
     });
 
     // Calcular saldo inicial (transações com subcategoria "Saldo inicial")
@@ -2360,15 +2379,15 @@ function renderDashboard() {
     const incomeTotal = monthlyTransactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
     const expenseTotal = monthlyTransactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
     
-    // Calcular saldo do mês anterior como base
-    const previousMonthBalance = calculateBalanceUpToPreviousMonth(year, month);
+    const previousMonthBalance = (year !== null && month !== null)
+      ? calculateBalanceUpToPreviousMonth(year, month)
+      : 0;
     
-    // Saldo atual = saldo do mês anterior + receitas do mês - despesas do mês
     const balance = previousMonthBalance + incomeTotal - expenseTotal;
     
     const topExpense = monthlyTransactions.filter((item) => item.type === 'expense').reduce((max, item) => Math.max(max, item.value), 0);
-    const daysInMonth = new Date(year, month, 0).getDate();
-    const average = expenseTotal / Math.max(daysInMonth, 1);
+    const uniqueDays = new Set(monthlyTransactions.map((item) => new Date(item.date).toISOString().slice(0, 10))).size || 1;
+    const average = expenseTotal / uniqueDays;
     const savedRate = incomeTotal ? Math.max(0, Math.round(((incomeTotal - expenseTotal) / incomeTotal) * 100)) : 0;
     
     dashboardData = {
@@ -2395,9 +2414,12 @@ function renderDashboard() {
   dom.cardSavedRate.textContent = `${dashboardData.savedRate}%`;
   
   // PHASE 11: Verificar limites de gastos
-  notificationSystem.checkBudgetLimits(year, month);
+  const notifyYear = year || new Date().getFullYear();
+  const notifyMonth = month || new Date().getMonth() + 1;
+  notificationSystem.checkBudgetLimits(notifyYear, notifyMonth);
   
-  buildCharts(year, month);
+  renderGoals();
+  buildCharts(notifyYear, notifyMonth);
 }
 
 function buildCharts(year, month) {
@@ -2902,8 +2924,16 @@ function renderHeatmap(year) {
 }
 
 function renderLimitsTable() {
+  const filterYear = state.filters.year === 'all' ? null : Number(state.filters.year);
+  const filterMonth = state.filters.month === 'all' ? null : Number(state.filters.month);
+
   dom.limitTableBody.innerHTML = state.categories.map((category) => {
-    const monthlySpent = state.transactions.filter((item) => item.type === 'expense' && item.category === category.id && new Date(item.date).getFullYear() === state.filters.year && new Date(item.date).getMonth() + 1 === state.filters.month).reduce((sum, item) => sum + item.value, 0);
+    const monthlySpent = state.transactions.filter((item) => {
+      const date = new Date(item.date);
+      const yearMatch = filterYear === null || date.getFullYear() === filterYear;
+      const monthMatch = filterMonth === null || date.getMonth() + 1 === filterMonth;
+      return item.type === 'expense' && item.category === category.id && yearMatch && monthMatch;
+    }).reduce((sum, item) => sum + item.value, 0);
     const usage = category.limit ? Math.min(100, Math.round((monthlySpent / category.limit) * 100)) : 0;
     const status = category.limit ? `${usage}% usado` : 'Sem limite';
     return `<tr><td>${category.icon} ${category.name}</td><td><input type="number" min="0" data-category="${category.id}" value="${category.limit}" class="limit-input"></td><td>${status}</td></tr>`;
@@ -2974,10 +3004,12 @@ function handleBackupImport(event) {
         categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
         transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
         fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
+        deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
         sort: parsed.sort || state.sort,
         pagination: parsed.pagination || state.pagination,
-        filters: parsed.filters || state.filters,
-        reportYear: parsed.reportYear || state.reportYear
+        filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || state.filters) },
+        reportYear: parsed.reportYear || state.reportYear,
+        goals: Array.isArray(parsed.goals) ? parsed.goals : []
       };
       
       // Migrar dados antigos de gastos fixos
@@ -3192,6 +3224,13 @@ function attachEventListeners() {
   if (document.getElementById('fixedType')) document.getElementById('fixedType').addEventListener('change', toggleDurationField);
   document.addEventListener('click', handleTableActions);
   document.addEventListener('input', handleLimitInputs);
+  
+  // Goals event listeners
+  if (dom.addGoalButton) dom.addGoalButton.addEventListener('click', () => openGoalModal());
+  if (dom.goalForm) dom.goalForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveGoal();
+  });
   
   // PHASE 4: Atalho de busca global com Ctrl+K
   document.addEventListener('keydown', (e) => {
@@ -3822,10 +3861,12 @@ function applyRawJson() {
       categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
       transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
       fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
+      deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
       sort: parsed.sort || state.sort,
       pagination: parsed.pagination || state.pagination,
-      filters: parsed.filters || state.filters,
-      reportYear: parsed.reportYear || state.reportYear
+      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || state.filters) },
+      reportYear: parsed.reportYear || state.reportYear,
+      goals: Array.isArray(parsed.goals) ? parsed.goals : []
     };
     
     // Migrar dados antigos de gastos fixos
@@ -4608,6 +4649,123 @@ function initNewFeatures() {
   // Vincular eventos
   dom.setSavingsGoal?.addEventListener('click', setSavingsGoal);
   dom.saveCurrentScenario?.addEventListener('click', saveCurrentScenario);
+}
+
+// ==================== GOALS FUNCTIONS ====================
+function renderGoals() {
+  const balance = parseFloat(dom.cardBalance.textContent.replace(/[^\d,-]/g, '').replace(',', '.')) || 0;
+  const container = dom.goalsContainer;
+  container.innerHTML = '';
+
+  if (state.goals.length === 0) {
+    container.innerHTML = '<p style="text-align: center; color: var(--muted); padding: 2rem;">Nenhuma meta definida. Clique em "Adicionar Meta" para começar.</p>';
+    return;
+  }
+
+  state.goals.forEach((goal, index) => {
+    const progress = Math.min((balance / goal.targetValue) * 100, 100);
+    const currentValue = Math.min(balance, goal.targetValue);
+
+    const goalElement = document.createElement('div');
+    goalElement.className = 'goal-item';
+    goalElement.innerHTML = `
+      <div class="goal-header">
+        <h5 class="goal-title">${goal.name}</h5>
+        <div class="goal-actions">
+          <button class="edit-goal" data-index="${index}" title="Editar meta">
+            <i class="fa-solid fa-edit"></i>
+          </button>
+          <button class="delete-goal" data-index="${index}" title="Excluir meta">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div class="goal-progress-bar">
+        <div class="goal-progress-fill" style="width: ${progress}%; background-color: ${goal.color};"></div>
+      </div>
+      <div class="goal-progress-text">
+        <span>${formatCurrency(currentValue)}</span>
+        <span>${formatCurrency(goal.targetValue)}</span>
+      </div>
+    `;
+
+    container.appendChild(goalElement);
+  });
+
+  // Attach event listeners
+  container.querySelectorAll('.edit-goal').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const index = parseInt(e.currentTarget.dataset.index);
+      editGoal(index);
+    });
+  });
+
+  container.querySelectorAll('.delete-goal').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const index = parseInt(e.currentTarget.dataset.index);
+      deleteGoal(index);
+    });
+  });
+}
+
+function openGoalModal(goal = null, index = -1) {
+  const modal = dom.goalModal;
+  modal.classList.add('active');
+  dom.goalModalTitle.textContent = goal ? 'Editar Meta' : 'Nova Meta';
+  dom.goalName.value = goal ? goal.name : '';
+  dom.goalTarget.value = goal ? goal.targetValue : '';
+  dom.goalColor.value = goal ? goal.color : '#38bdf8';
+
+  dom.goalForm.dataset.editIndex = index;
+}
+
+function saveGoal() {
+  const name = dom.goalName.value.trim();
+  const targetValue = parseFloat(dom.goalTarget.value);
+  const color = dom.goalColor.value;
+
+  if (!name || !targetValue || targetValue <= 0) {
+    showToast('Preencha todos os campos corretamente.', 'error');
+    return;
+  }
+
+  const goal = {
+    id: Date.now(),
+    name,
+    targetValue,
+    color,
+    visible: true
+  };
+
+  const editIndex = parseInt(dom.goalForm.dataset.editIndex);
+  if (editIndex >= 0) {
+    goal.id = state.goals[editIndex].id;
+    state.goals[editIndex] = goal;
+  } else {
+    state.goals.push(goal);
+  }
+
+  saveState();
+  renderGoals();
+  dom.goalModal.classList.remove('active');
+  showToast(`Meta "${name}" ${editIndex >= 0 ? 'atualizada' : 'criada'} com sucesso!`, 'success');
+}
+
+function editGoal(index) {
+  const goal = state.goals[index];
+  if (goal) {
+    openGoalModal(goal, index);
+  }
+}
+
+function deleteGoal(index) {
+  const goal = state.goals[index];
+  if (confirm(`Tem certeza que deseja excluir a meta "${goal.name}"?`)) {
+    state.goals.splice(index, 1);
+    saveState();
+    renderGoals();
+    showToast('Meta excluída com sucesso.', 'success');
+  }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
