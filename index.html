@@ -71,17 +71,17 @@
         <div class="panel-header">
           <div>
             <h3>Dashboard principal</h3>
-            <p>Todos os indicadores atualizados por mês e ano.</p>
-            <p id="dashboardFilterSummary" class="filter-summary">Selecione o período para ver os dados.</p>
+            <p>Escolha ano e mês para ver o saldo real e comparar com o mês anterior.</p>
+            <p id="dashboardFilterSummary" class="filter-summary" aria-live="polite" title="O período filtrado determina quais lançamentos entram no cálculo. Se um mês estiver selecionado, o saldo anterior inclui o fechamento do mês anterior.">Selecione o período para ver os dados.</p>
           </div>
           <div class="filter-row">
             <label>
               Ano
-              <select id="dashboardYear"></select>
+              <select id="dashboardYear" aria-describedby="dashboardFilterSummary"></select>
             </label>
             <label>
               Mês
-              <select id="dashboardMonth"></select>
+              <select id="dashboardMonth" aria-describedby="dashboardFilterSummary"></select>
             </label>
           </div>
         </div>
@@ -98,44 +98,49 @@
           <article class="card accent-card">
             <div class="card-content">
               <span>Saldo atual</span>
-              <strong id="cardBalance">R$ 0,00</strong>
+              <strong id="cardBalance" role="status" aria-live="polite">R$ 0,00</strong>
             </div>
           </article>
           <article class="card accent-card">
             <div class="card-content">
-              <span>Saldo anterior</span>
+              <span>Saldo anterior <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Saldo acumulado até o final do mês anterior ao filtro ativo. Quando um mês específico é selecionado, inclui o fechamento do mês anterior.</span></span></span>
               <strong id="cardInitialBalance">R$ 0,00</strong>
-              <p class="card-note">Valor separado antes de entradas e saídas.</p>
+              <p class="card-note">Saldo acumulado até o final do mês anterior ao filtro ativo.</p>
             </div>
           </article>
           <article class="card">
             <div class="card-content">
-              <span>Entradas mês</span>
+              <span>Entradas no período <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Total de receitas registradas no período selecionado. Inclui salários, investimentos e outras fontes de renda.</span></span></span>
               <strong id="cardIncome">R$ 0,00</strong>
+              <p class="card-note">Total de receitas registradas no período selecionado.</p>
             </div>
           </article>
           <article class="card">
             <div class="card-content">
-              <span>Saídas mês</span>
+              <span>Saídas no período <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Total de despesas registradas no período selecionado. Inclui gastos fixos e variáveis.</span></span></span>
               <strong id="cardExpense">R$ 0,00</strong>
+              <p class="card-note">Total de despesas registradas no período selecionado.</p>
             </div>
           </article>
           <article class="card">
             <div class="card-content">
-              <span>Maior gasto</span>
+              <span>Maior gasto no período <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Maior valor de despesa única registrado no período. Ajuda a identificar gastos extraordinários.</span></span></span>
               <strong id="cardTopExpense">R$ 0,00</strong>
+              <p class="card-note">Maior valor de despesa única registrado no período.</p>
             </div>
           </article>
           <article class="card">
             <div class="card-content">
-              <span>Média diária</span>
+              <span>Média diária de despesas <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Média de despesas por dia com base nos dias usados pelo período selecionado. Calculado dividindo o total de despesas pelo número de dias.</span></span></span>
               <strong id="cardDailyAverage">R$ 0,00</strong>
+              <p class="card-note">Média de despesas por dia considerando o período filtrado.</p>
             </div>
           </article>
           <article class="card">
             <div class="card-content">
-              <span>Percentual economizado</span>
+              <span>Economia (%) <span class="tooltip"><span class="tooltip-icon" tabindex="0">i</span><span class="tooltip-text">Porcentagem da receita que sobrou após descontar as despesas no período selecionado. Fórmula: ((Receitas - Despesas) / Receitas) × 100.</span></span></span>
               <strong id="cardSavedRate">0%</strong>
+              <p class="card-note">Porcentagem da receita que sobrou após descontar as despesas.</p>
             </div>
           </article>
         </div>
@@ -823,7 +828,7 @@
             </ul>
 
             <div class="help-footer">
-              <p><strong>LuminaFin v1.2</strong> - Seu controle financeiro completo e inteligente! 🚀</p>
+              <p><strong>LuminaFin v1.3</strong> - Seu controle financeiro completo e inteligente! 🚀</p>
             </div>
           </div>
         </div>
@@ -952,7 +957,7 @@
   <footer class="app-footer">
     <div class="footer-content">
       <div class="footer-section">
-        <p>LuminaFin v1.2</p>
+        <p>LuminaFin v1.3</p>
       </div>
       <div class="footer-section">
         <p>Desenvolvido por <strong>Izanagi</strong></p>

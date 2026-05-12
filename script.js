@@ -1012,18 +1012,29 @@ function calculateCurrentBalance() {
  * @returns {number} Saldo acumulado até o final do mês anterior
  */
 function calculateBalanceUpToPreviousMonth(year, month) {
-  const previousMonthDate = new Date(year, month - 1, 0); // Último dia do mês anterior
-  
-  const transactionsUpToPreviousMonth = state.transactions.filter((transaction) => {
-    const transactionDate = new Date(transaction.date);
-    return transactionDate <= previousMonthDate;
-  });
-  
-  const balance = transactionsUpToPreviousMonth.reduce((sum, item) => {
-    return sum + (item.type === 'income' ? item.value : -item.value);
-  }, 0);
-  
-  return Math.round(balance * 100) / 100;
+  if (year !== null && month !== null) {
+    const previousMonthDate = new Date(year, month - 1, 0); // Último dia do mês anterior
+    const transactionsUpToPreviousMonth = state.transactions.filter((transaction) => {
+      const transactionDate = new Date(transaction.date);
+      return transactionDate <= previousMonthDate;
+    });
+    const balance = transactionsUpToPreviousMonth.reduce((sum, item) => {
+      return sum + (item.type === 'income' ? item.value : -item.value);
+    }, 0);
+    return Math.round(balance * 100) / 100;
+  }
+
+  if (year === null && month !== null) {
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const balance = state.transactions.reduce((sum, item) => {
+      const transactionDate = new Date(item.date);
+      const monthMatch = transactionDate.getMonth() + 1 === previousMonth;
+      return monthMatch ? sum + (item.type === 'income' ? item.value : -item.value) : sum;
+    }, 0);
+    return Math.round(balance * 100) / 100;
+  }
+
+  return 0;
 }
 
 function calculatePurchaseProjection({ amount, installments = 1, monthlyIncome, monthlyExpense }) {
@@ -2091,6 +2102,7 @@ function init() {
     cardTopExpense: document.getElementById('cardTopExpense'),
     cardDailyAverage: document.getElementById('cardDailyAverage'),
     cardSavedRate: document.getElementById('cardSavedRate'),
+    dashboardFilterSummary: document.getElementById('dashboardFilterSummary'),
     chartIncomeExpense: document.getElementById('chartIncomeExpense'),
     chartCategorySpending: document.getElementById('chartCategorySpending'),
     chartBalanceTrend: document.getElementById('chartBalanceTrend'),
@@ -2379,7 +2391,7 @@ function renderDashboard() {
     const incomeTotal = monthlyTransactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
     const expenseTotal = monthlyTransactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
     
-    const previousMonthBalance = (year !== null && month !== null)
+    const previousMonthBalance = month !== null
       ? calculateBalanceUpToPreviousMonth(year, month)
       : 0;
     
@@ -2412,6 +2424,13 @@ function renderDashboard() {
   dom.cardTopExpense.textContent = formatCurrency(dashboardData.topExpense);
   dom.cardDailyAverage.textContent = formatCurrency(dashboardData.average);
   dom.cardSavedRate.textContent = `${dashboardData.savedRate}%`;
+
+  const selectedPeriod = `${yearValue === 'all' ? 'Todos os anos' : yearValue} / ${monthValue === 'all' ? 'Todos os meses' : labelsMonths[Number(monthValue) - 1]}`;
+  const periodInfo = month !== null
+    ? 'Saldo anterior inclui o fechamento do mês anterior ao mês selecionado.'
+    : 'Saldo anterior não se aplica quando todos os meses são exibidos.';
+  dom.dashboardFilterSummary.textContent = `Visualizando: ${selectedPeriod}. ${periodInfo}`;
+  dom.dashboardFilterSummary.title = `O período filtrado determina quais transações são consideradas. ${periodInfo}`;
   
   // PHASE 11: Verificar limites de gastos
   const notifyYear = year || new Date().getFullYear();
@@ -3256,6 +3275,56 @@ function attachEventListeners() {
           dom.pageTitle.textContent = 'Transações';
         }
       }
+    }
+  });
+  
+  // Inicializar tooltips customizados
+  initTooltips();
+}
+
+function initTooltips() {
+  // Melhorar acessibilidade dos tooltips
+  document.querySelectorAll('.tooltip-icon').forEach(icon => {
+    icon.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        // Toggle tooltip visibility for keyboard users
+        const tooltip = icon.nextElementSibling;
+        if (tooltip) {
+          const isVisible = tooltip.style.visibility === 'visible';
+          tooltip.style.visibility = isVisible ? 'hidden' : 'visible';
+          tooltip.style.opacity = isVisible ? '0' : '1';
+        }
+      }
+      if (e.key === 'Escape') {
+        // Hide tooltip
+        const tooltip = icon.nextElementSibling;
+        if (tooltip) {
+          tooltip.style.visibility = 'hidden';
+          tooltip.style.opacity = '0';
+        }
+      }
+    });
+
+    // Hide tooltip when clicking outside or on other elements
+    icon.addEventListener('blur', () => {
+      setTimeout(() => {
+        const tooltip = icon.nextElementSibling;
+        if (tooltip) {
+          tooltip.style.visibility = 'hidden';
+          tooltip.style.opacity = '0';
+        }
+      }, 150);
+    });
+  });
+
+  // Close tooltips when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.tooltip')) {
+      document.querySelectorAll('.tooltip-text').forEach(tooltip => {
+        tooltip.style.visibility = 'hidden';
+        tooltip.style.opacity = '0';
+      });
     }
   });
 }
