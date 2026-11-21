@@ -1,19 +1,29 @@
-const CACHE_NAME = 'LuminaFin-cache-v1';
-const ASSETS_TO_CACHE = [
+const CACHE_VERSION = '2.0.5';
+const LOCAL_CACHE = `LuminaFin-local-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `LuminaFin-runtime-${CACHE_VERSION}`;
+const LOCAL_ASSETS = [
   '.',
   'index.html',
   'style.css',
   'script.js',
+  'src/core/money.js',
+  'src/core/finance.js',
+  'src/core/fixed-expenses.js',
+  'src/core/currency.js',
+  'src/core/coffers.js',
+  'src/core/planning.js',
+  'src/core/validation.js',
+  'src/storage/schema.js',
+  'src/ui/navigation.js',
   'manifest.json',
   'icon.svg',
-  'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap'
+  'icon-192.png',
+  'icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+    caches.open(LOCAL_CACHE).then((cache) => cache.addAll(LOCAL_ASSETS))
   );
   self.skipWaiting();
 });
@@ -21,7 +31,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => Promise.all(
-      cacheNames.filter((name) => name !== CACHE_NAME)
+      cacheNames.filter((name) => name !== LOCAL_CACHE && name !== RUNTIME_CACHE)
         .map((name) => caches.delete(name))
     ))
   );
@@ -30,22 +40,71 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-      return fetch(event.request)
-        .then((response) => {
-          if (!response || response.status !== 200 || response.type === 'opaque') return response;
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return response;
-        })
-        .catch(() => {
-          if (event.request.destination === 'document') {
-            return caches.match('index.html');
+  const url = new URL(event.request.url);
+  const isLocal = url.origin === self.location.origin;
+
+  if (!isLocal) {
+    event.respondWith(
+      (async () => {
+        let cached = null;
+        let cache = null;
+        try {
+          cache = await caches.open(RUNTIME_CACHE);
+          cached = await cache.match(event.request);
+        } catch {
+          cache = null;
+        }
+        const refresh = fetch(event.request).then((response) => {
+          if (response && response.ok && cache) {
+            return cache.put(event.request, response.clone())
+              .catch(() => undefined)
+              .then(() => response);
           }
-          return new Response('', { status: 504, statusText: 'Offline' });
+          return response;
         });
-    })
+        if (cached) {
+          event.waitUntil(refresh.catch(() => undefined));
+          return cached;
+        }
+        try {
+          return await refresh;
+        } catch {
+          return new Response('', { status: 504, statusText: 'Offline' });
+        }
+      })()
+    );
+    return;
+  }
+
+  event.respondWith(
+    (async () => {
+      let cachedResponse = null;
+      try {
+        cachedResponse = await caches.match(event.request, { cacheName: LOCAL_CACHE });
+      } catch {
+        cachedResponse = null;
+      }
+      if (cachedResponse) return cachedResponse;
+      try {
+        const response = await fetch(event.request);
+        if (response && response.status === 200 && response.type !== 'opaque') {
+          caches.open(LOCAL_CACHE)
+            .then((cache) => cache.put(event.request, response.clone()))
+            .catch(() => undefined);
+        }
+        return response;
+      } catch {
+        if (event.request.destination === 'document') {
+          let fallback = null;
+          try {
+            fallback = await caches.match('index.html');
+          } catch {
+            fallback = null;
+          }
+          if (fallback) return fallback;
+        }
+        return new Response('', { status: 504, statusText: 'Offline' });
+      }
+    })()
   );
 });

@@ -1,19 +1,55 @@
-/*
-  LuminaFin - Sistema de controle financeiro pessoal com SPA, localStorage, charts e administração.
-  Todos os módulos são escritos em JavaScript puro para garantir compatibilidade e desempenho.
-*/
+import {
+  calculatePeriodTotals,
+  calculateCategoryExpenseTotals,
+  calculateDailyExpenseAverage,
+  calculateSavingsRate,
+  calculateFilteredOpeningBalance,
+  calculateAccountBalanceAt,
+  calculateUnsettledPeriodTotals,
+  dateKey,
+  normalizeDate,
+  periodMatches
+} from './src/core/finance.js';
+import { toCents, fromCents, formatMoneyFromCents } from './src/core/money.js';
+import {
+  createMissingFixedExpenseOccurrences,
+  isFixedExpenseActiveInMonth,
+  resolveFixedExpenseStartMonth
+} from './src/core/fixed-expenses.js';
+import { migrateState, createEmptyState, SCHEMA_VERSION, STORAGE_KEY } from './src/storage/schema.js';
+import { validateCofferSettings, validateStateShape } from './src/core/validation.js';
+import {
+  BASE_CURRENCY,
+  convertBaseCentsToDisplayAmount,
+  convertDisplayAmountToBaseCents,
+  FX_RATE_SCALE,
+  SUPPORTED_CURRENCIES,
+  changeDisplayCurrency,
+  getExchangeRate
+} from './src/core/currency.js';
+import {
+  calculateCofferBalance,
+  calculateCofferBalances,
+  createCofferOperation,
+  getCofferRateDescription,
+  resolveCofferTransition,
+  simulateCofferYield
+} from './src/core/coffers.js';
+import { closeMobileNavigation } from './src/ui/navigation.js';
+import {
+  applyInvoicePayment,
+  buildCreditInstallmentSchedule,
+  calculateCreditCardUsage,
+  getCreditInvoiceDates,
+  getCreditInvoiceMonth,
+  summarizeCreditInvoice
+} from './src/core/credit-cards.js';
+import {
+  evaluatePurchaseDecision,
+  simulateLongTermSavings,
+  summarizeMonthlyBudget
+} from './src/core/planning.js';
 
-const STORAGE_KEY = 'LuminaFin-v1';
-
-// ==================== PHASE 11: MÚLTIPLAS MOEDAS ====================
-const currencySettings = {
-  'BRL': { symbol: 'R$', name: 'Real Brasileiro', rate: 1.0 },
-  'USD': { symbol: '$', name: 'Dólar Americano', rate: 5.20 },
-  'EUR': { symbol: '€', name: 'Euro' , rate: 5.80 },
-  'GBP': { symbol: '£', name: 'Libra Esterlina', rate: 6.50 },
-  'JPY': { symbol: '¥', name: 'Iene Japonês', rate: 0.035 },
-  'CAD': { symbol: 'C$', name: 'Dólar Canadense', rate: 3.85 }
-};
 
 const defaultSettings = {
   themeMode: 'dark',
@@ -50,7 +86,12 @@ let state = {
   categories: [...defaultCategories],
   transactions: [],
   fixedExpenses: [],
-  deletedItems: [], // Trash bin para recuperação de dados deletados
+  initialBalances: [],
+  coffers: [],
+  cofferSettings: { ...createEmptyState().cofferSettings },
+  scenarios: [],
+  savingsGoals: [],
+  deletedItems: [],
   sort: { key: 'date', order: 'desc' },
   pagination: { page: 1, pageSize: 10 },
   filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all' },
@@ -67,20 +108,32 @@ const charts = {
   topExpenses: null,
   reportCategory: null,
   reportMonthly: null,
+  reportTopIncome: null,
   reportPayment: null,
   purchaseProjection: null,
   balanceProjection: null,
-  savingsGoal: null
+  savingsGoal: null,
+  longTermProjection: null
 };
 
 const labelsMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const paymentMethods = ['Pix','Cartão','Dinheiro','Boleto','Débito','Saldo'];
 let deferredInstallPrompt = null;
+let activeModalTrigger = null;
 
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js')
-      .then(() => showToast('Service Worker registrado. Offline suportado.', 'success'))
+      .then((registration) => {
+        showToast('Service Worker registrado. Offline suportado.', 'success');
+        registration.addEventListener('updatefound', () => {
+          const worker = registration.installing;
+          worker?.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              showToast('Nova versão disponível. Atualize o aplicativo.', 'info');
+            }
+          });
+        });
+      })
       .catch((error) => showToast(`Falha no Service Worker: ${error.message}`, 'error'));
   }
 }
@@ -122,151 +175,6 @@ function installApp() {
 
 // ==================== PHASE 9: ESTRUTURAS DE CLASSE - PADRÕES OOP ====================
 
-/**
- * Gerenciador de Estado Centralizado
- * PHASE 9: Padrão Observable para reatividade
- */
-class AppStateManager {
-  constructor(initialState) {
-    this.state = initialState;
-    this.observers = [];
-  }
-  
-  subscribe(observer) {
-    this.observers.push(observer);
-  }
-  
-  notify(changes) {
-    this.observers.forEach(obs => obs(changes));
-  }
-  
-  setState(newState) {
-    const oldState = { ...this.state };
-    this.state = { ...this.state, ...newState };
-    this.notify({ old: oldState, new: this.state });
-  }
-}
-
-/**
- * Gerenciador de Transações
- * PHASE 9: Encapsulação de lógica de transações
- */
-class TransactionManager {
-  constructor(state) {
-    this.state = state;
-  }
-  
-  add(transaction) {
-    this.state.transactions.push({ ...transaction, id: transaction.id || createId() });
-    return this.state.transactions[this.state.transactions.length - 1];
-  }
-  
-  update(id, updates) {
-    const tx = this.state.transactions.find(t => t.id === id);
-    if (tx) {
-      Object.assign(tx, updates);
-      return tx;
-    }
-    return null;
-  }
-  
-  delete(id) {
-    const index = this.state.transactions.findIndex(t => t.id === id);
-    if (index >= 0) {
-      return this.state.transactions.splice(index, 1)[0];
-    }
-    return null;
-  }
-  
-  find(predicate) {
-    return this.state.transactions.filter(predicate);
-  }
-  
-  getByPeriod(year, month, type = 'all') {
-    return this.find(t => {
-      const date = new Date(t.date);
-      const yearMatch = date.getFullYear() === year;
-      const monthMatch = date.getMonth() + 1 === month;
-      const typeMatch = type === 'all' || t.type === type;
-      return yearMatch && monthMatch && typeMatch;
-    });
-  }
-}
-
-/**
- * Gerenciador de Categorias
- * PHASE 9: Encapsulação de lógica de categorias
- */
-class CategoryManager {
-  constructor(state) {
-    this.state = state;
-  }
-  
-  add(category) {
-    this.state.categories.push({ ...category, id: category.id || createId() });
-    return this.state.categories[this.state.categories.length - 1];
-  }
-  
-  update(id, updates) {
-    const cat = this.state.categories.find(c => c.id === id);
-    if (cat) {
-      Object.assign(cat, updates);
-      return cat;
-    }
-    return null;
-  }
-  
-  delete(id) {
-    const index = this.state.categories.findIndex(c => c.id === id);
-    if (index >= 0) {
-      return this.state.categories.splice(index, 1)[0];
-    }
-    return null;
-  }
-  
-  getByType(type) {
-    return this.state.categories.filter(c => c.type === type);
-  }
-}
-
-/**
- * Gerenciador de Gastos Fixos
- * PHASE 9: Encapsulação de lógica de gastos fixos
- */
-class FixedExpenseManager {
-  constructor(state) {
-    this.state = state;
-  }
-  
-  add(expense) {
-    this.state.fixedExpenses.push({ ...expense, id: expense.id || createId() });
-    return this.state.fixedExpenses[this.state.fixedExpenses.length - 1];
-  }
-  
-  update(id, updates) {
-    const exp = this.state.fixedExpenses.find(e => e.id === id);
-    if (exp) {
-      Object.assign(exp, updates);
-      return exp;
-    }
-    return null;
-  }
-  
-  delete(id) {
-    const index = this.state.fixedExpenses.findIndex(e => e.id === id);
-    if (index >= 0) {
-      return this.state.fixedExpenses.splice(index, 1)[0];
-    }
-    return null;
-  }
-  
-  getActive() {
-    return this.state.fixedExpenses.filter(e => e.active);
-  }
-}
-
-// ==================== FIM ESTRUTURAS DE CLASSE - PHASE 9 ====================
-
 function createId() {
   if (window.crypto && window.crypto.randomUUID) {
     return crypto.randomUUID();
@@ -283,15 +191,81 @@ function createId() {
  * @returns {string} Valor formatado
  */
 function formatCurrency(value, currency = state.settings?.currency || 'BRL') {
-  const currencyInfo = currencySettings[currency] || currencySettings['BRL'];
-  const decimals = currency === 'JPY' ? 0 : 2;
-  const formatted = value.toLocaleString('pt-BR', { 
-    style: 'currency', 
-    currency: currency,
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  });
-  return formatted;
+  return formatCurrencyFromCents(toCents(value), currency);
+}
+
+function formatCurrencyFromCents(cents, currency = state.settings?.currency || 'BRL') {
+  const baseCurrency = state.settings?.baseCurrency || BASE_CURRENCY;
+  const date = dateKey(new Date());
+  const amount = convertBaseCentsToDisplayAmount(cents, currency, state.fxRates || [], date, baseCurrency);
+  if (amount === null) return formatMoneyFromCents(cents, baseCurrency);
+  if (currency === baseCurrency) return formatMoneyFromCents(cents, currency);
+  const locale = SUPPORTED_CURRENCIES[currency]?.locale || 'pt-BR';
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: currency === 'JPY' ? 0 : 2,
+    maximumFractionDigits: currency === 'JPY' ? 0 : 2
+  }).format(amount);
+}
+
+function convertInputAmountToBaseCents(value, date = dateKey(new Date()), existing = null) {
+  const currency = state.settings?.currency || BASE_CURRENCY;
+  const converted = convertDisplayAmountToBaseCents(
+    value,
+    currency,
+    state.fxRates || [],
+    date,
+    state.settings?.baseCurrency || BASE_CURRENCY
+  );
+  if (converted !== null) return converted;
+  if (existing?.currencyAtEntry === currency
+    && Number.isSafeInteger(existing.fxRateToBaseMicros)
+    && existing.fxRateToBaseMicros > 0) {
+    const numerator = BigInt(toCents(value)) * BigInt(existing.fxRateToBaseMicros);
+    const scale = BigInt(FX_RATE_SCALE);
+    const rounded = numerator >= 0n
+      ? (numerator + scale / 2n) / scale
+      : (numerator - scale / 2n) / scale;
+    const cents = Number(rounded);
+    return Number.isSafeInteger(cents) ? cents : null;
+  }
+  return null;
+}
+
+function convertBaseCentsToInputValue(cents, date = dateKey(new Date())) {
+  const currency = state.settings?.currency || BASE_CURRENCY;
+  const amount = convertBaseCentsToDisplayAmount(
+    cents,
+    currency,
+    state.fxRates || [],
+    date,
+    state.settings?.baseCurrency || BASE_CURRENCY
+  );
+  return amount === null ? fromCents(cents) : amount;
+}
+
+function currencySnapshot(nativeAmount, date, existing = null) {
+  const currency = state.settings?.currency || BASE_CURRENCY;
+  const rate = getExchangeRate(
+    state.fxRates || [],
+    currency,
+    date,
+    state.settings?.baseCurrency || BASE_CURRENCY
+  ) || (existing?.currencyAtEntry === currency
+    && Number.isSafeInteger(existing.fxRateToBaseMicros)
+    ? {
+      rateToBaseMicros: existing.fxRateToBaseMicros,
+      effectiveDate: existing.fxRateEffectiveDate || date
+    }
+    : null);
+  if (!rate) return null;
+  return {
+    currencyAtEntry: currency,
+    amountCentsAtEntry: toCents(nativeAmount),
+    fxRateToBaseMicros: rate.rateToBaseMicros,
+    fxRateEffectiveDate: rate.effectiveDate
+  };
 }
 
 // ==================== PHASE 11: SISTEMA DE NOTIFICAÇÕES ====================
@@ -320,31 +294,60 @@ const notificationSystem = {
     if (!state.settings.notificationsEnabled) return;
     
     state.categories.forEach(category => {
-      if (!category.limit || category.limit === 0) return;
-      
-      const spent = state.transactions
-        .filter(t => {
-          const date = new Date(t.date);
-          return t.category === category.id && 
-                 t.type === 'expense' &&
-                 date.getFullYear() === year && 
-                 date.getMonth() + 1 === month;
-        })
-        .reduce((sum, t) => sum + t.value, 0);
-      
-      const percentage = (spent / category.limit) * 100;
+      const limitCents = Number.isSafeInteger(category.limitCents)
+        ? category.limitCents
+        : toCents(category.limit);
+      if (limitCents <= 0) return;
+      const spentCents = state.transactions
+        .filter((transaction) => periodMatches(transaction.date, year, month)
+          && (transaction.status === 'paid' || transaction.sourceType === 'creditPurchase')
+          && transaction.type === 'expense'
+          && transaction.category === category.id)
+        .reduce((sum, transaction) => sum + (
+          Number.isSafeInteger(transaction.valueCents)
+            ? transaction.valueCents
+            : toCents(transaction.value)
+        ), 0);
+      const percentage = limitCents > 0 ? (spentCents / limitCents) * 100 : 0;
       const threshold = state.settings.notifyOnLimitReached || 80;
       
       if (percentage >= threshold && percentage < 100) {
+        const notificationId = `budget:${year}-${String(month).padStart(2, '0')}:${category.id}:near`;
+        if (state.notifications.some((item) => item.id === notificationId)) return;
         const title = `⚠️ Limite próximo: ${category.icon} ${category.name}`;
-        const body = `Você gastou ${percentage.toFixed(0)}% do limite de ${formatCurrency(category.limit)}`;
+        const body = `Você gastou ${percentage.toFixed(0)}% do limite de ${formatCurrencyFromCents(limitCents)}`;
+        state.notifications.push({
+          id: notificationId,
+          type: 'budget-limit',
+          categoryId: category.id,
+          period: `${year}-${String(month).padStart(2, '0')}`,
+          level: 'near',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          deletedAt: null,
+          version: 1
+        });
         notificationSystem.sendNotification(title, body);
       } else if (percentage >= 100) {
+        const notificationId = `budget:${year}-${String(month).padStart(2, '0')}:${category.id}:exceeded`;
+        if (state.notifications.some((item) => item.id === notificationId)) return;
         const title = `🚨 Limite ultrapassado: ${category.icon} ${category.name}`;
-        const body = `Você ultrapassou o limite em ${formatCurrency(spent - category.limit)}!`;
+        const body = `Você ultrapassou o limite em ${formatCurrencyFromCents(spentCents - limitCents)}!`;
+        state.notifications.push({
+          id: notificationId,
+          type: 'budget-limit',
+          categoryId: category.id,
+          period: `${year}-${String(month).padStart(2, '0')}`,
+          level: 'exceeded',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          deletedAt: null,
+          version: 1
+        });
         notificationSystem.sendNotification(title, body);
       }
     });
+    saveState();
   },
 
   sendNotification: (title, body) => {
@@ -365,43 +368,63 @@ const notificationSystem = {
 
 // ==================== FASE 12: EXPORTAÇÃO AVANÇADA ====================
 
+function csvCell(value) {
+  const text = String(value ?? '');
+  const safeText = /^[\s]*[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replace(/"/g, '""')}"`;
+}
+
 const exportManager = {
-  exportToExcel: (year) => {
-    const transactions = state.transactions.filter(t => new Date(t.date).getFullYear() === year);
+  exportToExcel: (year = null) => {
+    const transactions = state.transactions.filter((transaction) => periodMatches(transaction.date, year));
 
     let csv = 'Data,Categoria,Subcategoria,Tipo,Descrição,Valor,Pagamento,Status\n';
 
-    transactions.forEach(t => {
-      const category = getCategory(t.category);
-      const categoryName = category ? category.name : t.category;
-      const type = t.type === 'income' ? 'Entrada' : 'Saída';
-      const status = t.status === 'paid' ? 'Pago' : t.status === 'pending' ? 'Pendente' : 'Agendado';
-      
-      csv += `"${t.date}","${categoryName}","${t.subcategory || '-'}","${type}","${t.description}","${t.value.toFixed(2)}","${t.payment || '-'}","${status}\n`;
+    transactions.forEach((transaction) => {
+      const category = getCategory(transaction.category);
+      const categoryName = category ? category.name : transaction.category;
+      const type = transaction.type === 'income' ? 'Entrada' : transaction.type === 'transfer' ? 'Transferência' : 'Saída';
+      const status = formatStatus(transaction.status);
+      const value = Number.isSafeInteger(transaction.valueCents)
+        ? fromCents(transaction.valueCents)
+        : transaction.value;
+      const row = [
+        transaction.date, categoryName, transaction.subcategory || '-', type,
+        transaction.description, Number(value).toFixed(2), transaction.payment || '-', status
+      ];
+      csv += `${row.map(csvCell).join(',')}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `LuminaFin-${year}.csv`;
+    const objectUrl = URL.createObjectURL(blob);
+    link.href = objectUrl;
+    link.download = `LuminaFin-${year || 'todos'}.csv`;
     link.click();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     showToast('✓ Arquivo CSV exportado com sucesso!', 'success');
   },
 
-  generatePDFContent: (year) => {
-    const monthNames = ['Ano todo', ...labelsMonths];
-    const totalIncome = state.transactions.filter(t => new Date(t.date).getFullYear() === year && t.type === 'income').reduce((sum, t) => sum + t.value, 0);
-    const totalExpense = state.transactions.filter(t => new Date(t.date).getFullYear() === year && t.type === 'expense').reduce((sum, t) => sum + t.value, 0);
+  generatePDFContent: (year = null) => {
+    const realized = calculatePeriodTotals(state.transactions, year);
+    const unsettled = calculateUnsettledPeriodTotals(state.transactions, year);
+    const totalIncome = fromCents(realized.incomeCents);
+    const totalExpense = fromCents(realized.expenseCents);
     const balance = totalIncome - totalExpense;
-    const forecast = renderForecastData(year);
+    const pendingNet = fromCents(unsettled.pendingIncomeCents - unsettled.pendingExpenseCents);
+    const scheduledNet = fromCents(unsettled.scheduledIncomeCents - unsettled.scheduledExpenseCents);
+    const forecast = renderForecastData(Number.isInteger(year) ? year : new Date().getFullYear());
 
     let rows = state.transactions
-      .filter(t => new Date(t.date).getFullYear() === year)
-      .sort((a, b) => new Date(b.date) - new Date(a.date))
-      .map(t => {
-        const category = getCategory(t.category);
-        const type = t.type === 'income' ? '+ Entrada' : '- Saída';
-        return `<tr><td>${t.date}</td><td>${type}</td><td>${category?.name || t.category}</td><td>${sanitizeHtml(t.description)}</td><td>${formatCurrency(t.value)}</td></tr>`;
+      .filter((transaction) => periodMatches(transaction.date, year))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .map((transaction) => {
+        const category = getCategory(transaction.category);
+        const type = transaction.type === 'income' ? '+ Entrada' : transaction.type === 'transfer' ? 'Transferência' : '- Saída';
+        const valueCents = Number.isSafeInteger(transaction.valueCents)
+          ? transaction.valueCents
+          : toCents(transaction.value);
+        return `<tr><td>${sanitizeHtml(transaction.date)}</td><td>${type}</td><td>${sanitizeHtml(category?.name || transaction.category)}</td><td>${sanitizeHtml(transaction.description)}</td><td>${formatCurrencyFromCents(valueCents)}</td><td>${sanitizeHtml(formatStatus(transaction.status))}</td></tr>`;
       }).join('');
 
     let projectionRows = forecast.map((item) => `
@@ -432,14 +455,16 @@ const exportManager = {
   <h1>LuminaFin</h1>
   <h2>Relatório anual ${year}</h2>
   <div class="summary">
-    <div class="summary-card"><strong>Receitas</strong><p>${formatCurrency(totalIncome)}</p></div>
-    <div class="summary-card"><strong>Despesas</strong><p>${formatCurrency(totalExpense)}</p></div>
-    <div class="summary-card"><strong>Saldo</strong><p>${formatCurrency(balance)}</p></div>
+    <div class="summary-card"><strong>Entradas realizadas</strong><p>${formatCurrency(totalIncome)}</p></div>
+    <div class="summary-card"><strong>Saídas realizadas</strong><p>${formatCurrency(totalExpense)}</p></div>
+    <div class="summary-card"><strong>Saldo realizado</strong><p>${formatCurrency(balance)}</p></div>
+    <div class="summary-card"><strong>Pendências (líquido)</strong><p>${formatCurrency(pendingNet)}</p></div>
+    <div class="summary-card"><strong>Agendado (líquido)</strong><p>${formatCurrency(scheduledNet)}</p></div>
     <div class="summary-card"><strong>Projeção média</strong><p>${formatCurrency(forecast.reduce((sum, item) => sum + item.projectedBalance, 0) / Math.max(forecast.length, 1))}</p></div>
   </div>
   <h3>Transações</h3>
   <table>
-    <thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Valor</th></tr></thead>
+    <thead><tr><th>Data</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Valor</th><th>Status</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <h3>Projeções futuras</h3>
@@ -451,7 +476,7 @@ const exportManager = {
 </html>`;
   },
 
-  downloadPDF: (year) => {
+  downloadPDF: (year = null) => {
     const content = exportManager.generatePDFContent(year);
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
@@ -469,7 +494,7 @@ const exportManager = {
 function safeParse(json, fallback) {
   try {
     return JSON.parse(json);
-  } catch (error) {
+  } catch {
     return fallback;
   }
 }
@@ -487,23 +512,6 @@ function debounce(func, delay = 300) {
   return function debounced(...args) {
     clearTimeout(timeout);
     timeout = setTimeout(() => func.apply(this, args), delay);
-  };
-}
-
-/**
- * Throttle: Limita execução da função a um intervalo fixo
- * @param {Function} func - Função a ser executada
- * @param {number} limit - Intervalo mínimo em ms
- * @returns {Function} Função com throttle aplicado
- */
-function throttle(func, limit = 100) {
-  let lastRun = 0;
-  return function throttled(...args) {
-    const now = Date.now();
-    if (now - lastRun >= limit) {
-      func.apply(this, args);
-      lastRun = now;
-    }
   };
 }
 
@@ -560,11 +568,16 @@ const trashBin = {
    * @param {Object} item - Item a ser movido
    */
   moveToTrash(type, item) {
+    const timestamp = new Date().toISOString();
     const trashItem = {
-      id: item.id,
+      id: createId(),
+      entityId: item.id,
       type,
       data: { ...item },
-      deletedAt: new Date().toISOString(),
+      deletedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      version: 1,
       expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 dias
     };
     
@@ -628,10 +641,21 @@ const trashBin = {
 };
 
 function renderTrashStatus() {
-  const count = trashBin.listTrash().length;
+  const items = trashBin.listTrash();
+  const count = items.length;
   const statusText = count === 0 ? 'Lixeira vazia' : `${count} item${count === 1 ? '' : 's'} na lixeira`;
   const statusElement = document.getElementById('trashStatusText');
   if (statusElement) statusElement.textContent = statusText;
+  const list = document.getElementById('trashItemsList');
+  if (!list) return;
+  list.innerHTML = items.map((item) => {
+    const data = item.data || {};
+    const label = data.name || data.description || data.title || item.type;
+    return `<div class="trash-item">
+      <span>${sanitizeHtml(label)} · ${sanitizeHtml(item.type)} · ${sanitizeHtml(item.deletedAt?.slice(0, 10) || '')}</span>
+      <button type="button" class="secondary-button small" data-action="restore-trash" data-id="${sanitizeHtml(item.id)}" aria-label="Restaurar ${sanitizeHtml(label)}">Restaurar</button>
+    </div>`;
+  }).join('');
 }
 
 function restoreLastTrashItem() {
@@ -642,12 +666,39 @@ function restoreLastTrashItem() {
   }
 
   const lastItem = items[items.length - 1];
+  restoreTrashItem(lastItem.id);
+}
+
+function restoreTrashItem(trashId) {
+  const lastItem = trashBin.listTrash().find((item) => item.id === trashId);
+  if (!lastItem) {
+    showToast('Item não encontrado na lixeira.', 'error');
+    return;
+  }
+  if (['transaction', 'fixedExpense'].includes(lastItem.type)
+    && lastItem.data?.category
+    && !state.categories.some((category) => category.id === lastItem.data.category)) {
+    showToast('Restaure ou recrie a categoria vinculada antes de restaurar este item.', 'warning');
+    return;
+  }
   const restored = trashBin.restoreFromTrash(lastItem.id);
   if (!restored) {
     showToast('Não foi possível restaurar o item.', 'error');
     return;
   }
 
+  const alreadyExists = [
+    state.transactions,
+    state.categories,
+    state.fixedExpenses,
+    state.coffers
+  ].some((collection) => collection.some((item) => item.id === restored.id));
+  if (alreadyExists) {
+    state.deletedItems.push(lastItem);
+    saveState();
+    showToast('Já existe um item com este ID; o item permaneceu na lixeira.', 'error');
+    return;
+  }
   if (lastItem.type === 'transaction') {
     state.transactions.push(restored);
   } else if (lastItem.type === 'category') {
@@ -655,6 +706,8 @@ function restoreLastTrashItem() {
     rebuildCategoryDropdowns();
   } else if (lastItem.type === 'fixedExpense') {
     state.fixedExpenses.push(restored);
+  } else if (lastItem.type === 'coffer') {
+    state.coffers.push(restored);
   }
 
   saveState();
@@ -663,11 +716,17 @@ function restoreLastTrashItem() {
 }
 
 function emptyTrash() {
-  if (!confirm('Deseja esvaziar permanentemente a lixeira?')) return;
-  state.deletedItems = [];
-  saveState();
-  renderTrashStatus();
-  showToast('Lixeira esvaziada permanentemente.', 'success');
+  showDangerConfirmModal(
+    'Esvaziar lixeira',
+    'Deseja esvaziar permanentemente a lixeira?',
+    'ESVAZIAR',
+    () => {
+      state.deletedItems = [];
+      saveState();
+      renderTrashStatus();
+      showToast('Lixeira esvaziada permanentemente.', 'success');
+    }
+  );
 }
 
 /**
@@ -699,7 +758,7 @@ function validateInput(type, value) {
 function sanitizeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
 // ==================== PHASE 3: FUNÇÕES AUXILIARES - ELIMINANDO DUPLICAÇÃO ====================
@@ -709,12 +768,14 @@ function sanitizeHtml(str) {
  * PHASE 3: Elimina duplicação de renderização
  */
 function renderAllUI(options = {}) {
-  const { dashboard = true, transactions = true, categories = true, fixed = true, reports = true, limits = true, editor = true, trash = true } = options;
+  const { dashboard = true, transactions = true, categories = true, fixed = true, coffers = true, creditCards = true, reports = true, limits = true, editor = true, trash = true } = options;
   calcCache.clear();
   if (dashboard) renderDashboard();
   if (transactions) renderTransactionTable();
   if (categories) renderCategoryTable();
   if (fixed) renderFixedTable();
+  if (coffers) renderCoffers();
+  if (creditCards) renderCreditCards();
   if (reports) renderReportPage();
   if (limits) renderLimitsTable();
   if (editor) updateRawEditor();
@@ -731,48 +792,35 @@ function closeAndRender(renderOptions = { transactions: true, categories: true, 
 }
 
 /**
- * Limpa inputs de um formulário
- * PHASE 3: Função genérica para limpar múltiplos campos
- */
-function clearForm(...inputIds) {
-  inputIds.forEach(id => {
-    const input = document.getElementById(id);
-    if (input) {
-      if (input.type === 'checkbox' || input.type === 'radio') {
-        input.checked = false;
-      } else {
-        input.value = '';
-      }
-    }
-  });
-}
-
-/**
  * Abre modal genérica com título (consolida padrão repetido)
  * PHASE 3: Reduz duplicação de abertura de modais
  */
 function openModal(modalId, titleId, titleText) {
   const modal = document.getElementById(modalId);
   if (modal) {
-    modal.classList.add('active');
+    activateModal(modal);
     const titleEl = document.getElementById(titleId);
     if (titleEl) titleEl.textContent = titleText;
   }
 }
 
-/**
- * Obtém valores de múltiplos campos de formulário
- * PHASE 3: Reduz duplicação de extração de dados
- */
-function getFormValues(...fieldIds) {
-  const values = {};
-  fieldIds.forEach(id => {
-    const element = document.getElementById(id);
-    if (element) {
-      values[id] = element.type === 'checkbox' ? element.checked : element.value;
-    }
+function activateModal(modal) {
+  activeModalTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.classList.add('active');
+  modal.setAttribute('tabindex', '-1');
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-hidden', 'false');
+  const title = modal.querySelector('h2, h3, h4');
+  if (title) {
+    if (!title.id) title.id = `${modal.id || 'modal'}Title`;
+    modal.setAttribute('aria-labelledby', title.id);
+  }
+  requestAnimationFrame(() => {
+    const target = modal.querySelector('[autofocus]')
+      || modal.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])');
+    (target || modal).focus();
   });
-  return values;
 }
 
 /**
@@ -795,26 +843,6 @@ function setFormValues(valueMap) {
 // ==================== FIM FUNÇÕES AUXILIARES - PHASE 3 ====================
 
 // ==================== PHASE 4: MELHORIAS UX - BUSCA E SUGESTÕES ====================
-
-/**
- * Obtém sugestões de descrições baseado em histórico
- * PHASE 4: Auto-complete para descrições de transações
- */
-function getSuggestions(query = '', limit = 5) {
-  const lowerQuery = query.toLowerCase();
-  
-  // Coletar descrições únicas e recentes
-  const descriptions = [...new Set(state.transactions.map(t => t.description))]
-    .filter(d => d.toLowerCase().includes(lowerQuery))
-    .sort((a, b) => {
-      const aLast = state.transactions.filter(t => t.description === a).pop()?.date;
-      const bLast = state.transactions.filter(t => t.description === b).pop()?.date;
-      return new Date(bLast) - new Date(aLast);
-    })
-    .slice(0, limit);
-  
-  return descriptions;
-}
 
 /**
  * Busca global em transações, categorias e gastos fixos
@@ -865,31 +893,41 @@ function globalSearch(query) {
 // ==================== PHASE 5: RELATÓRIOS AVANÇADOS - MoM, TENDÊNCIAS, PREVISÕES ====================
 
 /**
- * Calcula Month-over-Month (MoM) - variação percentual de um mês para outro
- * PHASE 5: Variação % entre períodos
- */
-function calculateMoM(year, month, type = 'expense') {
-  const currentMonth = sumByPeriod(year, month, type);
-  const previousMonth = month === 1
-    ? sumByPeriod(year - 1, 12, type)
-    : sumByPeriod(year, month - 1, type);
-  
-  if (previousMonth === 0) return { value: 'N/A', direction: 'neutral' };
-  
-  const percentage = ((currentMonth - previousMonth) / previousMonth) * 100;
-  const direction = percentage > 0 ? 'up' : percentage < 0 ? 'down' : 'neutral';
-  
-  return {
-    value: Math.abs(percentage).toFixed(1) + '%',
-    direction,
-    numeric: percentage
-  };
-}
-
-/**
  * Calcula tendência: média dos últimos 3 meses
  * PHASE 5: Média móvel de 3 meses
  */
+function sumByPeriodForProjection(year, month, type) {
+  const cents = state.transactions
+    .filter((item) => periodMatches(item.date, year, month)
+      && item.status === 'paid'
+      && item.type === type
+      && item.sourceType !== 'fixedExpense')
+    .reduce((sum, item) => sum + (
+      Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value)
+    ), 0);
+  return fromCents(cents);
+}
+
+function getKnownFutureCents(year, month, type) {
+  const unsettled = calculateUnsettledPeriodTotals(state.transactions, year, month);
+  const pendingCents = type === 'income' ? unsettled.pendingIncomeCents : unsettled.pendingExpenseCents;
+  const scheduledCents = type === 'income' ? unsettled.scheduledIncomeCents : unsettled.scheduledExpenseCents;
+  if (type !== 'expense') return pendingCents + scheduledCents;
+
+  const sourceMonth = `${year}-${String(month).padStart(2, '0')}`;
+  const fixedCents = state.fixedExpenses
+    .filter((item) => isFixedExpenseActiveInMonth(item, new Date(year, month - 1, 1)))
+    .filter((fixed) => !state.transactions.some((item) => (
+      item.sourceType === 'fixedExpense'
+      && item.sourceId === fixed.id
+      && item.sourceMonth === sourceMonth
+    )))
+    .reduce((sum, item) => sum + (
+      Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value)
+    ), 0);
+  return pendingCents + scheduledCents + fixedCents;
+}
+
 function calculateTrend(year, month, type = 'expense') {
   let months = [];
   
@@ -901,32 +939,11 @@ function calculateTrend(year, month, type = 'expense') {
       m += 12;
       y -= 1;
     }
-    months.push(sumByPeriod(y, m, type));
+    months.push(sumByPeriodForProjection(y, m, type));
   }
   
   const average = months.reduce((a, b) => a + b, 0) / 3;
   return average;
-}
-
-/**
- * Calcula sazonalidade: identifica quais meses tém mais gastos
- * PHASE 5: Análise de padrões mensais
- */
-function analyzeSeasonality(year, type = 'expense') {
-  const monthly = Array.from({ length: 12 }, (_, i) => ({
-    month: i + 1,
-    total: sumByPeriod(year, i + 1, type),
-    label: ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'][i]
-  }));
-  
-  monthly.sort((a, b) => b.total - a.total);
-  
-  return {
-    highest: monthly[0],
-    lowest: monthly[monthly.length - 1],
-    average: monthly.reduce((sum, m) => sum + m.total, 0) / 12,
-    all: monthly
-  };
 }
 
 /**
@@ -935,8 +952,8 @@ function analyzeSeasonality(year, type = 'expense') {
  */
 function forecastNextMonths(year, month, type = 'expense', months = 3) {
   const trend = calculateTrend(year, month, type);
-  const lastMonth = month === 1 ? sumByPeriod(year - 1, 12, type) : sumByPeriod(year, month - 1, type);
-  const prevMonth = month <= 2 ? sumByPeriod(year - 1, 12 - (2 - month), type) : sumByPeriod(year, month - 2, type);
+  const lastMonth = month === 1 ? sumByPeriodForProjection(year - 1, 12, type) : sumByPeriodForProjection(year, month - 1, type);
+  const prevMonth = month <= 2 ? sumByPeriodForProjection(year - 1, 12 - (2 - month), type) : sumByPeriodForProjection(year, month - 2, type);
   const momentum = prevMonth ? (lastMonth - prevMonth) * 0.2 : 0;
   const basePrediction = Math.max(0, trend + momentum);
   const forecast = [];
@@ -949,8 +966,10 @@ function forecastNextMonths(year, month, type = 'expense', months = 3) {
       y += 1;
     }
     
-    const growthFactor = 1 + (i - 1) * 0.02;
-    const predicted = Math.round((basePrediction * growthFactor) * 100) / 100;
+    const annualInflationRate = Math.max(0, Number(state.settings.annualInflationBps) || 0) / 10000;
+    const growthFactor = Math.pow(1 + annualInflationRate, i / 12);
+    const knownFutureCents = getKnownFutureCents(y, m, type);
+    const predicted = Math.round((basePrediction * growthFactor + fromCents(knownFutureCents)) * 100) / 100;
     forecast.push({
       month: m,
       year: y,
@@ -999,10 +1018,37 @@ function calculateAverageMonthly(type, months = 3) {
 }
 
 function calculateCurrentBalance() {
-  const balance = state.transactions.reduce((sum, item) => {
-    return sum + (item.type === 'income' ? item.value : -item.value);
-  }, 0);
-  return Math.round(balance * 100) / 100;
+  return calculateAccountBalanceAt(state.transactions, state.initialBalances || [], dateKey(new Date()));
+}
+
+function renderFinancialPosition() {
+  if (!dom.positionAccountBalance) return;
+  const accountBalanceCents = calculateCurrentBalance();
+  const cofferBalances = calculateCofferBalances(state.coffers, state.transactions);
+  const principalCents = cofferBalances.reduce((sum, item) => sum + item.principalCents, 0);
+  const yieldCents = cofferBalances.reduce((sum, item) => sum + item.yieldCents, 0);
+  const cofferTotalCents = principalCents + yieldCents;
+  const today = new Date();
+  const unsettled = calculateUnsettledPeriodTotals(
+    state.transactions,
+    today.getFullYear(),
+    today.getMonth() + 1
+  );
+  const projectedAccountCents = accountBalanceCents
+    + unsettled.pendingIncomeCents - unsettled.pendingExpenseCents
+    + unsettled.scheduledIncomeCents - unsettled.scheduledExpenseCents;
+
+  dom.positionAccountBalance.textContent = formatCurrencyFromCents(accountBalanceCents);
+  if (dom.positionProjectedBalance) {
+    dom.positionProjectedBalance.textContent = formatCurrencyFromCents(projectedAccountCents);
+  }
+  dom.positionCofferBalance.textContent = formatCurrencyFromCents(cofferTotalCents);
+  dom.positionCofferComposition.textContent = `Principal ${formatCurrencyFromCents(principalCents)} · rendimento ${formatCurrencyFromCents(yieldCents)}`;
+  dom.positionNetWorth.textContent = formatCurrencyFromCents(accountBalanceCents + cofferTotalCents);
+  dom.positionPendingIncome.textContent = formatCurrencyFromCents(unsettled.pendingIncomeCents);
+  dom.positionPendingExpense.textContent = formatCurrencyFromCents(unsettled.pendingExpenseCents);
+  dom.positionScheduledIncome.textContent = formatCurrencyFromCents(unsettled.scheduledIncomeCents);
+  dom.positionScheduledExpense.textContent = formatCurrencyFromCents(unsettled.scheduledExpenseCents);
 }
 
 /**
@@ -1012,181 +1058,135 @@ function calculateCurrentBalance() {
  * @returns {number} Saldo acumulado até o final do mês anterior
  */
 function calculateBalanceUpToPreviousMonth(year, month) {
-  if (year !== null && month !== null) {
-    const previousMonthDate = new Date(year, month - 1, 0); // Último dia do mês anterior
-    const transactionsUpToPreviousMonth = state.transactions.filter((transaction) => {
-      const transactionDate = new Date(transaction.date);
-      return transactionDate <= previousMonthDate;
-    });
-    const balance = transactionsUpToPreviousMonth.reduce((sum, item) => {
-      return sum + (item.type === 'income' ? item.value : -item.value);
-    }, 0);
-    return Math.round(balance * 100) / 100;
-  }
-
-  if (year === null && month !== null) {
-    const previousMonth = month === 1 ? 12 : month - 1;
-    const balance = state.transactions.reduce((sum, item) => {
-      const transactionDate = new Date(item.date);
-      const monthMatch = transactionDate.getMonth() + 1 === previousMonth;
-      return monthMatch ? sum + (item.type === 'income' ? item.value : -item.value) : sum;
-    }, 0);
-    return Math.round(balance * 100) / 100;
-  }
-
-  return 0;
-}
-
-function calculatePurchaseProjection({ amount, installments = 1, monthlyIncome, monthlyExpense }) {
-  const income = typeof monthlyIncome === 'number' && monthlyIncome >= 0 ? monthlyIncome : calculateAverageMonthly('income', 3);
-  const expense = typeof monthlyExpense === 'number' && monthlyExpense >= 0 ? monthlyExpense : calculateAverageMonthly('expense', 3);
-  const monthlyNet = Math.round((income - expense) * 100) / 100;
-  const installmentValue = Math.round((amount / Math.max(installments, 1)) * 100) / 100;
-  const remainingBudget = Math.round((monthlyNet - installmentValue) * 100) / 100;
-  return {
-    amount,
-    installments,
-    income,
-    expense,
-    monthlyNet,
-    installmentValue,
-    remainingBudget,
-    canAfford: remainingBudget >= 0,
-    currentBalance: calculateCurrentBalance(),
-    totalCost: amount,
-    status: remainingBudget >= 0 ? 'Compra compatível com o orçamento mensal estimado.' : 'Atenção: compra deixa o orçamento mensal negativo.',
-    upfrontStatus: installments === 1
-      ? (calculateCurrentBalance() >= amount ? 'Saldo atual suficiente para pagar à vista.' : 'Saldo atual pode não ser suficiente para pagar à vista.')
-      : ''
-  };
+  return calculateFilteredOpeningBalance(
+    state.transactions,
+    state.initialBalances || [],
+    year,
+    month
+  );
 }
 
 function renderPurchaseProjection() {
   if (!dom.purchaseProjectionResult) return;
-  const amount = parseFloat(dom.purchaseValue?.value) || 0;
-  const installments = Math.max(1, Number(dom.purchaseInstallments?.value) || 1);
-  const monthlyIncome = dom.purchaseMonthlyIncome?.value.trim() === '' ? NaN : parseFloat(dom.purchaseMonthlyIncome?.value);
-  const monthlyExpense = dom.purchaseMonthlyExpense?.value.trim() === '' ? NaN : parseFloat(dom.purchaseMonthlyExpense?.value);
-  
-  // Obter saldo atual automaticamente
-  const currentBalance = calculateCurrentBalance();
-
-  if (amount <= 0) {
-    dom.purchaseProjectionResult.innerHTML = '<div>Nenhum valor de compra informado.</div>';
+  const enteredAmount = Number(dom.purchaseValue?.value) || 0;
+  const amountCents = convertInputAmountToBaseCents(enteredAmount);
+  if (enteredAmount > 0 && amountCents === null) {
+    showToast('Cadastre uma taxa de câmbio válida para converter o valor informado.', 'error');
+    return;
+  }
+  if (!amountCents || amountCents <= 0) {
+    dom.purchaseProjectionResult.textContent = 'Informe o valor da compra para estimar seu impacto.';
+    dom.purchaseInsightsContent?.replaceChildren();
     if (charts.purchaseProjection) {
       charts.purchaseProjection.destroy();
       charts.purchaseProjection = null;
     }
     return;
   }
-
-  const projection = calculatePurchaseProjection({
-    amount,
-    installments,
-    monthlyIncome: !isNaN(monthlyIncome) ? monthlyIncome : undefined,
-    monthlyExpense: !isNaN(monthlyExpense) ? monthlyExpense : undefined
-  });
-
-  // Calcular saldo após a compra e análises elaboradas
-  const balanceAfterPurchase = currentBalance - amount;
-  const emergencyFund = (projection.expense * 3);
-  const minSafeBalance = projection.expense * 1;
-  const monthsOfCoverageAfterPurchase = projection.remainingBudget > 0 ? (balanceAfterPurchase / projection.expense) : 0;
-  const recoveryMonths = balanceAfterPurchase < 0 ? Math.ceil(Math.abs(balanceAfterPurchase) / Math.max(projection.remainingBudget, 1)) : 0;
-  
-  const balanceHealthColor = balanceAfterPurchase >= 0 ? '#16a34a' : '#dc2626';
-  const balanceHealthStatus = balanceAfterPurchase >= 0 ? '✅ Saldo positivo' : '🚨 Saldo ficará negativo';
-  const recoveryStatus = recoveryMonths > 0 ? `<div style="color: #f59e0b;">⏱️ Recuperação em aprox. ${recoveryMonths} meses</div>` : '';
-
-  dom.purchaseProjectionResult.innerHTML = `
-    <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--accent); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-      <div><strong>💰 Análise de Impacto Financeiro</strong></div>
-      <div style="margin-top: 0.75rem;"><strong>Saldo atual:</strong> <span style="font-size: 1.1rem; color: ${currentBalance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(currentBalance)}</span></div>
-      <div style="margin-top: 0.5rem;"><strong>Valor da compra:</strong> <span style="font-size: 1.1rem; color: #f59e0b;">${formatCurrency(amount)}</span></div>
-      <div style="margin-top: 0.5rem; font-size: 1.2rem; font-weight: 700; background: rgba(${balanceAfterPurchase >= 0 ? '22, 197, 94' : '239, 68, 68'}, 0.2); padding: 0.75rem; border-radius: 6px;">
-        <strong>Saldo final:</strong> <span style="color: ${balanceHealthColor};">${formatCurrency(balanceAfterPurchase)}</span>
-      </div>
-      <div style="margin-top: 0.5rem; color: ${balanceHealthColor}; font-weight: 600;">${balanceHealthStatus}</div>
-      ${recoveryStatus}
-    </div>
-    
-    <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
-      <div><strong>📊 Detalhamento Financeiro</strong></div>
-      <div style="margin-top: 0.75rem;"><strong>Parcelas:</strong> ${projection.installments}x de ${formatCurrency(projection.installmentValue)}</div>
-      <div><strong>Renda mensal:</strong> ${formatCurrency(projection.income)}</div>
-      <div><strong>Despesa mensal:</strong> ${formatCurrency(projection.expense)}</div>
-      <div><strong>Superávit mensal atual:</strong> ${formatCurrency(projection.remainingBudget)}</div>
-      <div><strong>% da renda em parcela:</strong> ${((projection.installmentValue / projection.income) * 100).toFixed(1)}%</div>
-      <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Cobertura de despesas:</strong> ${monthsOfCoverageAfterPurchase.toFixed(1)} meses</div>
-      <div><strong>Fundo de emergência ideal:</strong> ${formatCurrency(emergencyFund)}</div>
-      <div><strong>Gap para emergência:</strong> <span style="color: ${(balanceAfterPurchase - emergencyFund) >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(Math.max(0, emergencyFund - balanceAfterPurchase))}</span></div>
-    </div>
-    
-    <div style="font-weight:600; color:${projection.canAfford ? '#16a34a' : '#dc2626'}; margin-top: 1rem;">${projection.status}</div>
-    ${projection.upfrontStatus ? `<div style="margin-top: 0.5rem;">${projection.upfrontStatus}</div>` : ''}
-  `;
-
-  // Render chart com saldo atual incluído
-  const chartData = {
-    labels: ['Saldo Atual', 'Renda Mensal', 'Gastos Mensais', 'Parcela da Compra', 'Saldo Restante'],
-    datasets: [{
-      label: 'Valor (R$)',
-      data: [currentBalance, projection.income, projection.expense, projection.installmentValue, Math.max(0, projection.remainingBudget)],
-      backgroundColor: [
-        currentBalance >= 0 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)', // green or red for current balance
-        'rgba(34, 197, 94, 0.8)', // green for income
-        'rgba(239, 68, 68, 0.8)', // red for expenses
-        'rgba(245, 158, 11, 0.8)', // orange for installment
-        projection.remainingBudget >= 0 ? 'rgba(59, 130, 246, 0.8)' : 'rgba(220, 38, 38, 0.8)' // blue or red for remaining
-      ],
-      borderColor: [
-        currentBalance >= 0 ? 'rgba(34, 197, 94, 1)' : 'rgba(239, 68, 68, 1)',
-        'rgba(34, 197, 94, 1)',
-        'rgba(239, 68, 68, 1)',
-        'rgba(245, 158, 11, 1)',
-        projection.remainingBudget >= 0 ? 'rgba(59, 130, 246, 1)' : 'rgba(220, 38, 38, 1)'
-      ],
-      borderWidth: 1
-    }]
+  const installments = Math.max(1, Number(dom.purchaseInstallments?.value) || 1);
+  const optionalCents = (input) => {
+    if (!input || input.value.trim() === '') return 0;
+    const converted = convertInputAmountToBaseCents(Number(input.value));
+    if (converted === null) throw new Error('Cadastre uma taxa de câmbio válida para os ajustes informados.');
+    return converted;
   };
+  try {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = today.getMonth() + 1;
+    const additionalIncomeCents = optionalCents(dom.purchaseMonthlyIncome);
+    const additionalExpenseCents = optionalCents(dom.purchaseMonthlyExpense);
+    const monthlyPosition = summarizeMonthlyBudget({
+      transactions: state.transactions,
+      fixedExpenses: state.fixedExpenses,
+      year,
+      month
+    });
+    monthlyPosition.estimatedIncomeCents = additionalIncomeCents;
+    monthlyPosition.estimatedExpenseCents = additionalExpenseCents;
 
-  // Generate insights
-  let insights = [];
-  
-  // Aviso sobre saldo negativo
-  if (currentBalance < 0) {
-    insights.push('🚨 Seu saldo atual é negativo! Comprar agora aumentará ainda mais o débito');
-  } else if (balanceAfterPurchase < 0) {
-    insights.push('⚠️ A compra deixará seu saldo negativo - considere aguardar ou reduzir o valor');
-  } else if (balanceAfterPurchase < 1000) {
-    insights.push('💡 A compra deixará pouco saldo. Mantenha uma reserva de emergência');
-  }
+    const accountBalanceCents = calculateCurrentBalance();
+    const decision = evaluatePurchaseDecision({
+      amountCents,
+      installments,
+      accountBalanceCents,
+      monthlyPosition,
+      coffers: state.coffers,
+      transactions: state.transactions
+    });
+    const verdicts = {
+      comfortable: ['Cabe com folga', 'var(--success)'],
+      tight: ['Cabe, mas aperta o orçamento', 'var(--warning)'],
+      'not-affordable': ['Não cabe sem reduzir a compra ou rever o plano', 'var(--danger)']
+    };
+    const [verdictLabel, verdictColor] = verdicts[decision.verdict];
+    const suggestedCoffer = decision.suggestedCoffer;
+    const cofferAdvice = decision.cashShortfallCents > 0
+      ? suggestedCoffer
+        ? `<p>Faltam ${formatCurrencyFromCents(decision.cashShortfallCents)} na conta. Um resgate de ${formatCurrencyFromCents(suggestedCoffer.grossWithdrawalCents)} do cofrinho <strong>${sanitizeHtml(suggestedCoffer.name)}</strong> libera aproximadamente ${formatCurrencyFromCents(suggestedCoffer.netReceivedCents)}; perda estimada de rendimento: ${formatCurrencyFromCents(suggestedCoffer.yieldLossCents)}.</p>`
+        : '<p>Nenhum cofrinho ativo cobre o valor faltante sem exceder seu saldo líquido disponível.</p>'
+      : '<p>O pagamento inicial cabe no saldo realizado da conta; os cofrinhos permanecem aplicados.</p>';
 
-  const budgetPercentage = (projection.installmentValue / projection.income) * 100;
-  if (budgetPercentage > 30) {
-    insights.push('⚠️ Parcela representa mais de 30% da renda - considere reduzir parcelas');
-  } else if (budgetPercentage <= 10) {
-    insights.push('✅ Parcela confortável (menos de 10% da renda)');
-  }
+    const futureCount = Math.min(Math.max(installments - 1, 3), 6);
+    const incomeForecast = forecastNextMonths(year, month, 'income', futureCount);
+    const expenseForecast = forecastNextMonths(year, month, 'expense', futureCount);
+    let projectedAccountCents = decision.monthEndAccountAfterPurchaseCents;
+    const flowRows = [
+      `<tr><th>Fim deste mês</th><td>${formatCurrencyFromCents(projectedAccountCents)}</td><td>${formatCurrencyFromCents(decision.installmentCents)}</td></tr>`
+    ];
+    for (let index = 0; index < futureCount; index += 1) {
+      const incomeCents = toCents(incomeForecast[index]?.predicted || 0);
+      const expenseCents = toCents(expenseForecast[index]?.predicted || 0);
+      const nextInstallmentCents = index + 1 < installments ? decision.installmentCents : 0;
+      projectedAccountCents += incomeCents - expenseCents - nextInstallmentCents;
+      const forecastDate = new Date(year, month + index, 1);
+      flowRows.push(`<tr><th>${labelsMonths[forecastDate.getMonth()]} ${forecastDate.getFullYear()}</th><td>${formatCurrencyFromCents(projectedAccountCents)}</td><td>${formatCurrencyFromCents(nextInstallmentCents)}</td></tr>`);
+    }
 
-  if (projection.remainingBudget < 500) {
-    insights.push('💰 Saldo restante apertado - revise orçamento mensal');
-  }
+    dom.purchaseProjectionResult.innerHTML = `
+      <div class="purchase-verdict" style="--verdict-color:${verdictColor}">
+        <strong>${verdictLabel}</strong>
+        <span>${installments}x de até ${formatCurrencyFromCents(decision.installmentCents)}</span>
+      </div>
+      <dl class="purchase-budget-breakdown">
+        <div><dt>Conta realizada hoje</dt><dd>${formatCurrencyFromCents(accountBalanceCents)}</dd></div>
+        <div><dt>Receita paga no mês</dt><dd>${formatCurrencyFromCents(monthlyPosition.paidIncomeCents)}</dd></div>
+        <div><dt>Despesas pagas</dt><dd>${formatCurrencyFromCents(monthlyPosition.paidExpenseCents)}</dd></div>
+        <div><dt>Boletos pendentes</dt><dd>${formatCurrencyFromCents(monthlyPosition.pendingExpenseCents)}</dd></div>
+        <div><dt>Saídas agendadas</dt><dd>${formatCurrencyFromCents(monthlyPosition.scheduledExpenseCents)}</dd></div>
+        <div><dt>Gastos fixos sem ocorrência</dt><dd>${formatCurrencyFromCents(monthlyPosition.ungeneratedFixedExpenseCents)}</dd></div>
+        <div><dt>Sobra segura após a parcela</dt><dd>${formatCurrencyFromCents(decision.safeRemainingAfterPurchaseCents)}</dd></div>
+        <div><dt>Fechamento conservador (sem entradas futuras)</dt><dd>${formatCurrencyFromCents(decision.safeMonthEndAccountAfterPurchaseCents)}</dd></div>
+        <div><dt>Fechamento esperado</dt><dd>${formatCurrencyFromCents(decision.monthEndAccountAfterPurchaseCents)}</dd></div>
+      </dl>
+      <p class="purchase-pending-note">Receitas pendentes (${formatCurrencyFromCents(monthlyPosition.pendingIncomeCents)}), agendadas (${formatCurrencyFromCents(monthlyPosition.scheduledIncomeCents)}) e estimadas (${formatCurrencyFromCents(additionalIncomeCents)}) não entram na sobra segura.</p>
+      ${cofferAdvice}
+      <table class="purchase-flow-table"><thead><tr><th>Fluxo estimado</th><th>Saldo da conta</th><th>Parcela</th></tr></thead><tbody>${flowRows.join('')}</tbody></table>
+    `;
+    const insights = [
+      decision.verdict === 'comfortable'
+        ? 'A parcela cabe após reservar as obrigações conhecidas.'
+        : decision.verdict === 'tight'
+          ? 'A compra deixa pouca margem depois dos boletos e fixos deste mês.'
+          : 'Considere reduzir o valor, aumentar o prazo ou adiar a compra.'
+    ];
+    if (installments > 12) insights.push('A projeção mostra até seis meses; as parcelas continuam após esse horizonte.');
+    dom.purchaseInsightsContent.innerHTML = insights.map((insight) => `<div>${sanitizeHtml(insight)}</div>`).join('');
 
-  if (projection.installments > 12) {
-    insights.push('📅 Muitas parcelas - considere prazo menor para reduzir juros');
-  }
-
-  if (insights.length === 0) {
-    insights.push('🎯 Compra parece adequada ao seu perfil financeiro');
-  }
-
-  dom.purchaseInsightsContent.innerHTML = insights.map(insight => `<div>${insight}</div>`).join('');
-
-  // Render chart
-  charts.purchaseProjection = renderChart(charts.purchaseProjection, dom.chartPurchaseProjection, {
+    charts.purchaseProjection = renderChart(charts.purchaseProjection, dom.chartPurchaseProjection, {
     type: 'bar',
-    data: chartData,
+    data: {
+      labels: ['Conta atual', 'Após primeira parcela', 'Sobra mensal segura'],
+      datasets: [{
+        label: 'Valor',
+        data: [
+          fromCents(accountBalanceCents),
+          fromCents(decision.accountAfterFirstPaymentCents),
+          fromCents(decision.safeRemainingAfterPurchaseCents)
+        ],
+        backgroundColor: ['#38bdf8', '#f59e0b', decision.safeRemainingAfterPurchaseCents >= 0 ? '#22c55e' : '#ef4444']
+      }]
+    },
     options: {
       responsive: true,
       plugins: {
@@ -1202,16 +1202,83 @@ function renderPurchaseProjection() {
       scales: chartScaleOptions()
     }
   });
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
 }
 
 function calculateBalanceProjection({ startBalance, monthlyIncome, monthlyExpense, months }) {
-  const balance = typeof startBalance === 'number' && !Number.isNaN(startBalance) ? startBalance : calculateCurrentBalance();
+  const balance = typeof startBalance === 'number' && Number.isFinite(startBalance)
+    ? startBalance
+    : fromCents(calculateCurrentBalance());
   const income = typeof monthlyIncome === 'number' && monthlyIncome >= 0 ? monthlyIncome : calculateAverageMonthly('income', 3);
   const expense = typeof monthlyExpense === 'number' && monthlyExpense >= 0 ? monthlyExpense : calculateAverageMonthly('expense', 3);
   const horizon = Math.max(1, Math.round(months));
   const monthlyNet = Math.round((income - expense) * 100) / 100;
   const projectedBalance = Math.round((balance + monthlyNet * horizon) * 100) / 100;
   return { balance, income, expense, horizon, monthlyNet, projectedBalance };
+}
+
+function renderLongTermProjection() {
+  if (!dom.longTermProjectionResult) return;
+  if (dom.futureCdiAnnual && dom.futureCdiAnnual.value === '') {
+    dom.futureCdiAnnual.value = (state.cofferSettings.annualCdiBps / 100).toFixed(2);
+  }
+  if (dom.futureInflation && dom.futureInflation.value === '') {
+    dom.futureInflation.value = ((state.settings.annualInflationBps || 0) / 100).toFixed(2);
+  }
+
+  const cofferBalances = calculateCofferBalances(state.coffers, state.transactions);
+  const currentCofferCents = cofferBalances.reduce((sum, item) => sum + item.totalCents, 0);
+  const savedMonthlyGoal = state.savingsGoals[0]?.monthlyGoalCents || 0;
+  const readAmountCents = (input, fallbackCents) => {
+    if (!input || input.value.trim() === '') return fallbackCents;
+    return convertInputAmountToBaseCents(Number(input.value));
+  };
+  const initialCents = readAmountCents(dom.futureStartingBalance, currentCofferCents);
+  const monthlyContributionCents = readAmountCents(dom.futureMonthlyContribution, savedMonthlyGoal);
+  const cdiPercent = Number(dom.futureCdiAnnual?.value);
+  const inflationPercent = Number(dom.futureInflation?.value);
+  const scenarioMultiplier = Number(dom.futureScenario?.value || 1);
+  const years = Number(dom.futureYears?.value || 10);
+  if (initialCents === null || monthlyContributionCents === null
+    || !Number.isFinite(cdiPercent) || cdiPercent < 0
+    || !Number.isFinite(inflationPercent) || inflationPercent < 0 || inflationPercent > 100) {
+    dom.longTermProjectionResult.textContent = 'Informe valores válidos e uma taxa de câmbio registrada para os valores informados.';
+    return;
+  }
+
+  const annualReturnBps = Math.round(cdiPercent * scenarioMultiplier * 100);
+  const annualInflationBps = Math.round(inflationPercent * 100);
+  const projection = simulateLongTermSavings({
+    initialCents,
+    monthlyContributionCents,
+    annualReturnBps,
+    annualInflationBps,
+    years
+  });
+  const returnPercent = (annualReturnBps / 100).toFixed(2).replace('.', ',');
+  dom.longTermProjectionResult.innerHTML = `
+    <dl class="long-term-metrics">
+      <div><dt>Saldo nominal em ${years} anos</dt><dd>${formatCurrencyFromCents(projection.finalNominalCents)}</dd></div>
+      <div><dt>Poder de compra estimado hoje</dt><dd>${formatCurrencyFromCents(projection.finalRealCents)}</dd></div>
+      <div><dt>Total aportado</dt><dd>${formatCurrencyFromCents(projection.totalContributionsCents)}</dd></div>
+      <div><dt>Taxa anual simulada</dt><dd>${returnPercent}% · ${formatCurrencyFromCents(monthlyContributionCents)}/mês</dd></div>
+    </dl>
+    <p>Saldo inicial: ${formatCurrencyFromCents(initialCents)}. Aportes ocorrem ao fim de cada mês. A taxa é uma hipótese constante, antes de impostos e sem garantia de rendimento.</p>
+  `;
+
+  charts.longTermProjection = renderChart(charts.longTermProjection, dom.chartLongTermProjection, {
+    type: 'line',
+    data: {
+      labels: projection.points.map((item) => `${item.year} ${item.year === 1 ? 'ano' : 'anos'}`),
+      datasets: [
+        { label: 'Nominal', data: projection.points.map((item) => fromCents(item.nominalCents)), borderColor: '#22c55e', backgroundColor: 'rgba(34, 197, 94, 0.12)', fill: false, tension: 0.2 },
+        { label: 'Valor de hoje', data: projection.points.map((item) => fromCents(item.realCents)), borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.12)', fill: false, tension: 0.2 }
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { labels: { color: '#f8fafc' } } }, scales: chartScaleOptions() }
+  });
 }
 
 function renderProjectionDashboard() {
@@ -1236,26 +1303,31 @@ function renderProjectionDashboard() {
 
 function renderBalanceProjection() {
   if (!dom.balanceProjectionResult) return;
-  const startBalance = dom.balanceStartValue?.value.trim() === '' ? NaN : parseFloat(dom.balanceStartValue?.value);
-  const balanceMonthlyIncome = dom.balanceMonthlyIncome?.value.trim() === '' ? NaN : parseFloat(dom.balanceMonthlyIncome?.value);
-  const balanceMonthlyExpense = dom.balanceMonthlyExpense?.value.trim() === '' ? NaN : parseFloat(dom.balanceMonthlyExpense?.value);
+  const convertOptionalInput = (input) => {
+    if (!input || input.value.trim() === '') return undefined;
+    const cents = convertInputAmountToBaseCents(Number(input.value));
+    return cents === null ? undefined : fromCents(cents);
+  };
+  const startBalance = convertOptionalInput(dom.balanceStartValue);
+  const balanceMonthlyIncome = convertOptionalInput(dom.balanceMonthlyIncome);
+  const balanceMonthlyExpense = convertOptionalInput(dom.balanceMonthlyExpense);
   const months = Number(dom.balanceProjectionMonths?.value) || 6;
 
   const projection = calculateBalanceProjection({
-    startBalance: !isNaN(startBalance) ? startBalance : undefined,
-    monthlyIncome: !isNaN(balanceMonthlyIncome) ? balanceMonthlyIncome : undefined,
-    monthlyExpense: !isNaN(balanceMonthlyExpense) ? balanceMonthlyExpense : undefined,
+    startBalance,
+    monthlyIncome: balanceMonthlyIncome,
+    monthlyExpense: balanceMonthlyExpense,
     months
   });
 
   // Análises elaboradas
-  const savingsRate = (projection.monthlyNet / projection.income) * 100;
+  const savingsRate = projection.income > 0 ? (projection.monthlyNet / projection.income) * 100 : null;
   const emergencyFund = projection.expense * 3;
-  const monthlyRatio = projection.balance / projection.expense;
-  const projectedRatio = projection.projectedBalance / projection.expense;
-  const breakEvenMonth = projection.monthlyNet >= 0 ? null : Math.ceil(projection.balance / Math.abs(projection.monthlyNet));
-  const excessBudget = projection.monthlyNet > 0 ? projection.monthlyNet : 0;
-  const deficitBudget = projection.monthlyNet < 0 ? Math.abs(projection.monthlyNet) : 0;
+  const monthlyRatio = projection.expense > 0 ? projection.balance / projection.expense : null;
+  const projectedRatio = projection.expense > 0 ? projection.projectedBalance / projection.expense : null;
+  const breakEvenMonth = projection.monthlyNet >= 0
+    ? null
+    : Math.max(0, Math.ceil(projection.balance / Math.abs(projection.monthlyNet)));
 
   const healthStatus = projection.projectedBalance >= 0 ? '✅ Projeção positiva' : '🚨 Projeção negativa';
   const healthColor = projection.projectedBalance >= 0 ? '#16a34a' : '#dc2626';
@@ -1265,7 +1337,7 @@ function renderBalanceProjection() {
     <div style="background: rgba(56, 189, 248, 0.1); border-left: 4px solid var(--accent); padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
       <div><strong>💰 Posição Financeira Atual</strong></div>
       <div style="margin-top: 0.75rem;"><strong>Saldo inicial:</strong> <span style="font-size: 1.1rem; color: ${projection.balance >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(projection.balance)}</span></div>
-      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> <span style="color: ${monthlyRatio >= 3 ? '#22c55e' : monthlyRatio >= 1 ? '#f59e0b' : '#ef4444'};">${monthlyRatio.toFixed(1)}x</span> (${(monthlyRatio * 30).toFixed(0)} dias)</div>
+      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> ${monthlyRatio === null ? '— (sem despesas estimadas)' : `<span style="color: ${monthlyRatio >= 3 ? '#22c55e' : monthlyRatio >= 1 ? '#f59e0b' : '#ef4444'};">${monthlyRatio.toFixed(1)}x</span> (${(monthlyRatio * 30).toFixed(0)} dias)`}</div>
     </div>
 
     <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
@@ -1273,7 +1345,7 @@ function renderBalanceProjection() {
       <div style="margin-top: 0.75rem;"><strong>Receita mensal:</strong> <span style="color: #22c55e;">${formatCurrency(projection.income)}</span></div>
       <div><strong>Despesa mensal:</strong> <span style="color: #ef4444;">${formatCurrency(projection.expense)}</span></div>
       <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Saldo líquido mensal:</strong> <span style="font-size: 1.1rem; color: ${projection.monthlyNet >= 0 ? '#22c55e' : '#ef4444'};">${formatCurrency(projection.monthlyNet)}</span></div>
-      <div><strong>Taxa de economia:</strong> <span style="color: ${savingsRate >= 20 ? '#22c55e' : savingsRate >= 10 ? '#f59e0b' : '#ef4444'};">${savingsRate.toFixed(1)}%</span></div>
+      <div><strong>Taxa de economia:</strong> ${savingsRate === null ? '— (sem renda estimada)' : `<span style="color: ${savingsRate >= 20 ? '#22c55e' : savingsRate >= 10 ? '#f59e0b' : '#ef4444'};">${savingsRate.toFixed(1)}%</span>`}</div>
       <div style="margin-top: 0.5rem;"><strong>Tendência:</strong> <span>${trenddDirection}</span></div>
     </div>
 
@@ -1281,7 +1353,7 @@ function renderBalanceProjection() {
       <div><strong>🔮 Projeção em ${projection.horizon} ${projection.horizon === 1 ? 'mês' : 'meses'}</strong></div>
       <div style="margin-top: 0.75rem; font-size: 1.2rem; font-weight: 700; color: ${healthColor};">Saldo final: ${formatCurrency(projection.projectedBalance)}</div>
       <div style="margin-top: 0.5rem; color: ${healthColor}; font-weight: 600;">${healthStatus}</div>
-      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> ${projectedRatio.toFixed(1)}x (${(projectedRatio * 30).toFixed(0)} dias)</div>
+      <div style="margin-top: 0.5rem;"><strong>Cobertura de despesas:</strong> ${projectedRatio === null ? '— (sem despesas estimadas)' : `${projectedRatio.toFixed(1)}x (${(projectedRatio * 30).toFixed(0)} dias)`}</div>
       ${breakEvenMonth ? `<div style="margin-top: 0.25rem; color: #ef4444;"><strong>⚠️ Saldo zera em:</strong> ${breakEvenMonth} meses</div>` : ''}
       <div style="margin-top: 0.5rem; padding-top: 0.75rem; border-top: 1px solid rgba(148, 163, 184, 0.3);"><strong>Fundo de emergência ideal:</strong> ${formatCurrency(emergencyFund)}</div>
       <div><strong>Gap para emergência:</strong> <span style="color: ${projection.projectedBalance >= emergencyFund ? '#22c55e' : '#ef4444'};">${formatCurrency(Math.max(0, emergencyFund - projection.projectedBalance))}</span></div>
@@ -1330,7 +1402,7 @@ function renderBalanceProjection() {
     insights.push('💪 Taxa de poupança excelente (>20%)');
   } else if (savingsRate < 10 && savingsRate > 0) {
     insights.push('⚖️ Taxa de poupança moderada - considere otimizar');
-  } else if (savingsRate <= 0) {
+  } else if (projection.monthlyNet < 0) {
     insights.push('⚠️ Gastos superiores às receitas - reveja orçamento');
   }
 
@@ -1365,79 +1437,9 @@ function renderBalanceProjection() {
   });
 }
 
-/**
- * Compara categoria com média histórica
- * PHASE 5: Detecção de anomalias
- */
-function compareWithHistoricalAverage(categoryId, year, month) {
-  const currentValue = state.transactions
-    .filter(t => new Date(t.date).getFullYear() === year && 
-                  new Date(t.date).getMonth() + 1 === month &&
-                  t.category === categoryId &&
-                  t.type === 'expense')
-    .reduce((sum, t) => sum + t.value, 0);
-  
-  const historical = state.transactions
-    .filter(t => t.category === categoryId && t.type === 'expense')
-    .reduce((sum, t) => sum + t.value, 0) / 12; // Média anual
-  
-  if (historical === 0) return { comparison: 'N/A', percentage: 0 };
-  
-  const percentage = ((currentValue - historical) / historical) * 100;
-  
-  return {
-    comparison: percentage > 0 ? 'acima' : 'abaixo',
-    percentage: Math.abs(percentage).toFixed(1),
-    value: currentValue,
-    average: historical.toFixed(2)
-  };
-}
-
 // ==================== FIM RELATÓRIOS AVANÇADOS - PHASE 5 ====================
 
 // ==================== PHASE 6: NOVAS FUNCIONALIDADES - TAGS, ORÇAMENTO, RECORRÊNCIA ====================
-
-/**
- * Gerencia tags de transações
- * PHASE 6: Sistema de tags para melhor categorização
- */
-const tagManager = {
-  getTagsFromTransaction: (transactionId) => {
-    const tx = state.transactions.find(t => t.id === transactionId);
-    return tx?.tags || [];
-  },
-  
-  addTagToTransaction: (transactionId, tag) => {
-    const tx = state.transactions.find(t => t.id === transactionId);
-    if (tx) {
-      if (!tx.tags) tx.tags = [];
-      if (!tx.tags.includes(tag)) {
-        tx.tags.push(tag);
-        saveState();
-      }
-    }
-  },
-  
-  removeTagFromTransaction: (transactionId, tag) => {
-    const tx = state.transactions.find(t => t.id === transactionId);
-    if (tx && tx.tags) {
-      tx.tags = tx.tags.filter(t => t !== tag);
-      saveState();
-    }
-  },
-  
-  getAllTags: () => {
-    const tags = new Set();
-    state.transactions.forEach(tx => {
-      if (tx.tags) tx.tags.forEach(tag => tags.add(tag));
-    });
-    return Array.from(tags);
-  },
-  
-  getTransactionsByTag: (tag) => {
-    return state.transactions.filter(tx => tx.tags && tx.tags.includes(tag));
-  }
-};
 
 /**
  * Gerencia orçamentos mensais por categoria
@@ -1448,23 +1450,29 @@ const budgetManager = {
     // Salvar orçamento em localStorage com formato de categoria
     const budget = state.categories.find(c => c.id === categoryId);
     if (budget) {
-      budget.limit = amount; // Já existia no modelo
+      budget.limitCents = Number.isSafeInteger(amount) ? amount : toCents(amount);
+      budget.limit = fromCents(budget.limitCents);
       saveState();
     }
   },
   
   getBudgetStatus: (categoryId, year, month) => {
-    const budget = state.categories.find(c => c.id === categoryId)?.limit || 0;
-    const spent = state.transactions
-      .filter(t => new Date(t.date).getFullYear() === year &&
-                    new Date(t.date).getMonth() + 1 === month &&
-                    t.category === categoryId &&
-                    t.type === 'expense')
-      .reduce((sum, t) => sum + t.value, 0);
+    const category = state.categories.find(c => c.id === categoryId);
+    const budgetCents = Number.isSafeInteger(category?.limitCents)
+      ? category.limitCents
+      : toCents(category?.limit || 0);
+    const spentCents = state.transactions
+      .filter(t => periodMatches(t.date, year, month)
+        && t.status === 'paid'
+        && t.category === categoryId
+        && t.type === 'expense')
+      .reduce((sum, t) => sum + (Number.isSafeInteger(t.valueCents) ? t.valueCents : toCents(t.value)), 0);
+    const spent = fromCents(spentCents);
+    const budget = fromCents(budgetCents);
     
-    if (budget === 0) return { status: 'no-limit', percentage: 0 };
+    if (budgetCents === 0) return { status: 'no-limit', percentage: 0 };
     
-    const percentage = (spent / budget) * 100;
+    const percentage = (spentCents / budgetCents) * 100;
     const status = percentage > 100 ? 'exceeded' : percentage > 80 ? 'warning' : 'ok';
     
     return { status, percentage: Math.round(percentage), spent, budget };
@@ -1472,73 +1480,13 @@ const budgetManager = {
   
   getMonthlyBudgetOverview: (year, month) => {
     return state.categories
-      .filter(c => c.type === 'expense' && c.limit > 0)
+      .filter(c => c.type === 'expense' && (c.limitCents || toCents(c.limit || 0)) > 0)
       .map(c => ({
         category: c.name,
         ...budgetManager.getBudgetStatus(c.id, year, month)
       }));
   }
 };
-
-/**
- * Gerencia recorrências customizadas
- * PHASE 6: Padrões de recorrência personalizados
- */
-const recurringManager = {
-  types: {
-    daily: { interval: 1, unit: 'day' },
-    weekly: { interval: 7, unit: 'day' },
-    biweekly: { interval: 14, unit: 'day' },
-    monthly: { interval: 1, unit: 'month' },
-    quarterly: { interval: 3, unit: 'month' },
-    semiannual: { interval: 6, unit: 'month' },
-    annual: { interval: 1, unit: 'year' }
-  },
-  
-  generateRecurringTransactions: (template, startDate, endDate, type) => {
-    const recurring = [];
-    const typeConfig = this.types[type];
-    if (!typeConfig) return recurring;
-    
-    let currentDate = new Date(startDate);
-    const end = new Date(endDate);
-    
-    while (currentDate <= end) {
-      const txDate = currentDate.toISOString().slice(0, 10);
-      recurring.push({
-        ...template,
-        id: createId(),
-        date: txDate,
-        isRecurring: true,
-        recurringTemplateId: template.id
-      });
-      
-      // Incrementar data
-      if (typeConfig.unit === 'day') {
-        currentDate.setDate(currentDate.getDate() + typeConfig.interval);
-      } else if (typeConfig.unit === 'month') {
-        currentDate.setMonth(currentDate.getMonth() + typeConfig.interval);
-      } else if (typeConfig.unit === 'year') {
-        currentDate.setFullYear(currentDate.getFullYear() + typeConfig.interval);
-      }
-    }
-    
-    return recurring;
-  },
-  
-  applyRecurringTransactions: (templateId, endDate) => {
-    // Aplicar transações recorrentes até uma certa data
-    const template = state.transactions.find(t => t.id === templateId);
-    if (!template) return;
-    
-    const startDate = template.date;
-    const recurring = this.generateRecurringTransactions(template, startDate, endDate, 'monthly');
-    state.transactions.push(...recurring);
-    saveState();
-  }
-};
-
-// ==================== FIM NOVAS FUNCIONALIDADES - PHASE 6 ====================
 
 // ==================== PHASE 7: ACESSIBILIDADE & ATALHOS DE TECLADO ====================
 
@@ -1656,6 +1604,27 @@ function addFocusIndicators() {
     if (e.key === 'Tab') {
       document.body.classList.add('keyboard-nav');
     }
+    const openModal = document.querySelector('.modal.active');
+    if (!openModal) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeModals();
+    }
+    if (e.key === 'Tab') {
+      const focusable = Array.from(openModal.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
   });
   
   document.addEventListener('mousedown', () => {
@@ -1664,189 +1633,6 @@ function addFocusIndicators() {
 }
 
 // ==================== FIM ACESSIBILIDADE - PHASE 7 ====================
-
-// ==================== PHASE 10: TESTES BÁSICOS & DEBUGGING ====================
-
-/**
- * Sistema de Testes Básicos
- * PHASE 10: Validação de funcionalidades
- */
-const testSuite = {
-  tests: [],
-  results: [],
-  
-  assert: (condition, message) => {
-    if (!condition) {
-      throw new Error(`Asseção falhou: ${message}`);
-    }
-  },
-  
-  test: (name, fn) => {
-    testSuite.tests.push({ name, fn });
-  },
-  
-  run: () => {
-    testSuite.results = [];
-    console.group('%c🧠 Executando Testes', 'font-size: 14px; font-weight: bold');
-    
-    testSuite.tests.forEach(({ name, fn }) => {
-      try {
-        fn();
-        console.log(`%c✅ PASS: ${name}`, 'color: green; font-weight: bold');
-        testSuite.results.push({ name, status: 'pass' });
-      } catch (error) {
-        console.error(`%c❌ FAIL: ${name}`, 'color: red; font-weight: bold');
-        console.error(error.message);
-        testSuite.results.push({ name, status: 'fail', error: error.message });
-      }
-    });
-    
-    const passed = testSuite.results.filter(r => r.status === 'pass').length;
-    const failed = testSuite.results.filter(r => r.status === 'fail').length;
-    console.log(`%c
-🏁 Resumo: ${passed} passed, ${failed} failed`, 'font-size: 12px; font-weight: bold');
-    console.groupEnd();
-  }
-};
-
-/**
- * Testes Unitários para Funções Chave
- * PHASE 10: Validação de lógica principal
- */
-const registerTests = () => {
-  // Teste de formatação de moeda
-  testSuite.test('formatCurrency > Formatação BRL', () => {
-    testSuite.assert(
-      formatCurrency(1234.56) === 'R$ 1.234,56',
-      'Deve formatar 1234.56 como R$ 1.234,56'
-    );
-  });
-  
-  // Teste de debounce
-  testSuite.test('debounce > Reduz chamadas', () => {
-    let callCount = 0;
-    const fn = debounce(() => callCount++, 10);
-    fn();
-    fn();
-    fn();
-    testSuite.assert(callCount === 0, 'Debounce não deve executar imediatamente');
-  });
-  
-  // Teste de validação
-  testSuite.test('validateInput > Validação de email', () => {
-    testSuite.assert(
-      validateInput('email', 'user@example.com') === true,
-      'Deve validar email válido'
-    );
-    testSuite.assert(
-      validateInput('email', 'invalid-email') === false,
-      'Deve rejeitar email inválido'
-    );
-  });
-  
-  // Teste de sanitização
-  testSuite.test('sanitizeHtml > Remove scripts', () => {
-    const result = sanitizeHtml('<script>alert(1)</script>Text');
-    testSuite.assert(
-      !result.includes('<'),
-      'Deve remover tags HTML perigosas'
-    );
-  });
-  
-  // Teste de cache
-  testSuite.test('calcCache > Armazena e recupera', () => {
-    calcCache.set('test', 42);
-    testSuite.assert(
-      calcCache.get('test') === 42,
-      'Cache deve recuperar valor armazenado'
-    );
-  });
-  
-  // Teste de classe TransactionManager
-  testSuite.test('TransactionManager > CRUD de transações', () => {
-    const tm = new TransactionManager(state);
-    const initialCount = state.transactions.length;
-    
-    const tx = tm.add({ date: '2024-01-01', type: 'expense', value: 100 });
-    testSuite.assert(
-      state.transactions.length === initialCount + 1,
-      'Deve adicionar transação'
-    );
-    
-    tm.delete(tx.id);
-    testSuite.assert(
-      state.transactions.length === initialCount,
-      'Deve deletar transação'
-    );
-  });
-};
-
-/**
- * Debug Console Aprimorado
- * PHASE 10: Ferramentas de diagnóstico
- */
-const debugConsole = {
-  // Retorna status da aplicação
-  getStatus: () => ({
-    transactionCount: state.transactions.length,
-    categoryCount: state.categories.length,
-    fixedExpenseCount: state.fixedExpenses.length,
-    storageUsage: new Blob([JSON.stringify(state)]).size + ' bytes',
-    lastSaved: new Date().toLocaleTimeString(),
-    cacheSize: Object.keys(calcCache.data).length + ' chaves'
-  }),
-  
-  // Valida integridade dos dados
-  validate: () => {
-    const issues = [];
-    
-    // Validar transações
-    state.transactions.forEach((tx, idx) => {
-      if (!tx.id) issues.push(`Transação [${idx}]: falta ID`);
-      if (!tx.date) issues.push(`Transação [${idx}]: falta data`);
-      if (!tx.type) issues.push(`Transação [${idx}]: falta tipo`);
-      if (tx.value <= 0) issues.push(`Transação [${idx}]: valor inválido`);
-    });
-    
-    // Validar categorias
-    state.categories.forEach((cat, idx) => {
-      if (!cat.id) issues.push(`Categoria [${idx}]: falta ID`);
-      if (!cat.name) issues.push(`Categoria [${idx}]: falta nome`);
-    });
-    
-    return {
-      valid: issues.length === 0,
-      issues,
-      message: issues.length === 0 ? '✅ Dados válidos' : `❌ ${issues.length} problemas encontrados`
-    };
-  },
-  
-  // Gera relatório de performance
-  getPerformanceReport: () => ({
-    timestamp: new Date().toISOString(),
-    applicationState: debugConsole.getStatus(),
-    dataIntegrity: debugConsole.validate(),
-    memoryEstimate: new Blob([JSON.stringify(state)]).size,
-    cacheHitRate: 'N/A' // Seria trackado com instrumentação adicional
-  }),
-  
-  // Exporta diagnóstico completo para debug
-  exportDiagnostic: () => {
-    const diagnostic = {
-      timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent,
-      storage: debugConsole.getStatus(),
-      validation: debugConsole.validate(),
-      state: JSON.stringify(state, null, 2)
-    };
-    console.log('%c📑 Diagnóstico Completo', 'font-size: 14px; font-weight: bold');
-    console.table(diagnostic.storage);
-    return diagnostic;
-  }
-};
-
-// ==================== FIM TESTES - PHASE 10 ====================
-
 
 /**
  * Salva estado atual no localStorage
@@ -1871,45 +1657,56 @@ function saveState() {
  * @returns {void}
  */
 function loadState() {
+  let legacyScenarios = [];
+  let legacySavingsGoals = [];
+  try {
+    legacyScenarios = JSON.parse(window.localStorage.getItem('luminafin_scenarios') || '[]');
+  } catch {
+    legacyScenarios = [];
+  }
+  try {
+    legacySavingsGoals = JSON.parse(window.localStorage.getItem('luminafin_goals') || '[]');
+  } catch {
+    legacySavingsGoals = [];
+  }
+
   const saved = window.localStorage.getItem(STORAGE_KEY);
   if (!saved) {
-    state = {
-      settings: { ...defaultSettings },
-      categories: [...defaultCategories],
-      transactions: [],
-      fixedExpenses: [],
-      deletedItems: [],
-      sort: { key: 'date', order: 'desc' },
-      pagination: { page: 1, pageSize: 10 },
-      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all' },
-      reportYear: 'all',
-      goals: []
-    };
+    state = migrateState(createEmptyState(), {
+      scenarios: legacyScenarios,
+      savingsGoals: legacySavingsGoals
+    });
+    state.categories = [...defaultCategories].map((item) => ({
+      ...item,
+      limitCents: toCents(item.limit),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      deletedAt: null,
+      version: 1
+    }));
+    state.settings = { ...defaultSettings };
     saveState();
     return;
   }
   const parsed = safeParse(saved, null);
   if (parsed && typeof parsed === 'object') {
-    state = {
-      settings: { ...defaultSettings, ...(parsed.settings || {}) },
-      categories: Array.isArray(parsed.categories) ? parsed.categories : [...defaultCategories],
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
-      deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
-      sort: parsed.sort || { key: 'date', order: 'desc' },
-      pagination: parsed.pagination || { page: 1, pageSize: 10 },
-      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || {}) },
-      reportYear: parsed.reportYear || 'all',
-      goals: Array.isArray(parsed.goals) ? parsed.goals : []
-    };
-    
-    // Migrar dados antigos de gastos fixos (compatibilidade)
-    state.fixedExpenses = state.fixedExpenses.map((item) => ({
-      ...item,
-      type: item.type || 'fixed',
-      duration: item.duration || null,
-      startMonth: item.startMonth || null
-    }));
+    state = migrateState(parsed, {
+      scenarios: legacyScenarios,
+      savingsGoals: legacySavingsGoals
+    });
+    if (state.categories.length === 0) {
+      state.categories = defaultCategories.map((item) => ({
+        ...item,
+        limitCents: toCents(item.limit),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        deletedAt: null,
+        version: 1
+      }));
+    }
+    window.localStorage.removeItem('luminafin_scenarios');
+    window.localStorage.removeItem('luminafin_goals');
+    saveState();
   } else {
     showToast('Dados corrompidos no localStorage, carregando padrão.', 'warning');
     localStorage.removeItem(STORAGE_KEY);
@@ -1961,30 +1758,39 @@ function showToast(message, type = 'success') {
 function showAdminWarning() {
   const modal = document.getElementById('adminWarningModal');
   if (modal) {
-    modal.classList.add('active');
+    activateModal(modal);
   }
 }
 
 function performAutomaticBackup() {
-  const backupProgressModal = document.getElementById('backupProgressModal');
-  if (backupProgressModal) {
-    backupProgressModal.classList.add('active');
+  try {
+    const snapshot = JSON.parse(JSON.stringify(state));
+    downloadBackupSnapshot(snapshot, `LuminaFin-auto-backup-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`);
+    showToast('Backup automático do estado anterior realizado.', 'success');
+  } catch (error) {
+    console.error('Falha ao criar backup automático:', error);
+    showToast('Não foi possível criar o backup automático. A ação foi cancelada.', 'error');
+    throw error;
   }
-  
-  setTimeout(() => {
-    const dataStr = JSON.stringify(state, null, 2);
-    const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    link.download = `LuminaFin-auto-backup-${timestamp}.json`;
+}
+
+function downloadBackupSnapshot(snapshot, filename) {
+  const dataStr = JSON.stringify({
+    schemaVersion: SCHEMA_VERSION,
+    backupVersion: 3,
+    exportedAt: new Date().toISOString(),
+    state: snapshot
+  }, null, 2);
+  const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
+  const link = document.createElement('a');
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    link.href = objectUrl;
+    link.download = filename;
     link.click();
-    
-    if (backupProgressModal) {
-      backupProgressModal.classList.remove('active');
-    }
-    showToast('✓ Backup automático realizado com sucesso!', 'success');
-  }, 500);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
 }
 
 function showDangerConfirmModal(title, warningText, confirmWord, callback) {
@@ -1998,7 +1804,7 @@ function showDangerConfirmModal(title, warningText, confirmWord, callback) {
   
   if (!modal) return;
   
-  titleElement.innerHTML = `<i class="fa-solid fa-skull" style="color: #dc2626;"></i> ${title}`;
+  titleElement.textContent = title;
   warningElement.textContent = warningText;
   wordElement.textContent = confirmWord;
   input.value = '';
@@ -2021,13 +1827,13 @@ function showDangerConfirmModal(title, warningText, confirmWord, callback) {
   // Submit handler
   newForm.addEventListener('submit', (e) => {
     e.preventDefault();
-    modal.classList.remove('active');
+    closeModals();
     if (callback && typeof callback === 'function') {
       callback();
     }
   });
   
-  modal.classList.add('active');
+  activateModal(modal);
 }
 
 // ==================== FUNÇÕES DE TUTORIAL/ONBOARDING ====================
@@ -2043,7 +1849,7 @@ function showTutorialIfFirstTime() {
     const tutorialModal = document.getElementById('tutorialModal');
     if (tutorialModal) {
       localStorage.setItem('LuminaFin-tutorialShown', 'true');
-      tutorialModal.classList.add('active');
+      activateModal(tutorialModal);
       
       // Conectar botão "Ir para Tenho Dúvida"
       const goToHelpBtn = document.getElementById('goToHelpBtn');
@@ -2096,6 +1902,7 @@ function init() {
     dashboardYear: document.getElementById('dashboardYear'),
     dashboardMonth: document.getElementById('dashboardMonth'),
     cardBalance: document.getElementById('cardBalance'),
+    cardProjectedBalance: document.getElementById('cardProjectedBalance'),
     cardInitialBalance: document.getElementById('cardInitialBalance'),
     cardIncome: document.getElementById('cardIncome'),
     cardExpense: document.getElementById('cardExpense'),
@@ -2103,6 +1910,13 @@ function init() {
     cardDailyAverage: document.getElementById('cardDailyAverage'),
     cardSavedRate: document.getElementById('cardSavedRate'),
     dashboardFilterSummary: document.getElementById('dashboardFilterSummary'),
+    dashboardPage: document.getElementById('dashboard'),
+    dashboardEmptyState: document.getElementById('dashboardEmptyState'),
+    dashboardChapterTabs: document.querySelector('.chapter-tabs[data-chapter-group="dashboard"]'),
+    dashboardGoalsSection: document.querySelector('.goals-section'),
+    emptyAddTransaction: document.getElementById('emptyAddTransaction'),
+    emptyAddInitialBalance: document.getElementById('emptyAddInitialBalance'),
+    emptyOpenCoffers: document.getElementById('emptyOpenCoffers'),
     chartIncomeExpense: document.getElementById('chartIncomeExpense'),
     chartCategorySpending: document.getElementById('chartCategorySpending'),
     chartBalanceTrend: document.getElementById('chartBalanceTrend'),
@@ -2112,10 +1926,18 @@ function init() {
     transactionMonth: document.getElementById('transactionMonth'),
     transactionTypeFilter: document.getElementById('transactionTypeFilter'),
     transactionCategory: document.getElementById('transactionCategory'),
+    transactionCofferOperation: document.getElementById('transactionCofferOperation'),
+    transactionCoffer: document.getElementById('transactionCoffer'),
+    transactionPayment: document.getElementById('transactionPayment'),
+    transactionPaymentMethod: document.getElementById('transactionPaymentMethod'),
+    transactionCreditCard: document.getElementById('transactionCreditCard'),
+    transactionInstallments: document.getElementById('transactionInstallments'),
+    creditPurchaseFields: document.getElementById('creditPurchaseFields'),
     transactionCategoryFilter: document.getElementById('transactionCategoryFilter'),
     transactionPageSize: document.getElementById('transactionPageSize'),
     transactionTableBody: document.querySelector('#transactionTable tbody'),
     transactionPagination: document.getElementById('transactionPagination'),
+    upcomingTransactionsList: document.getElementById('upcomingTransactionsList'),
     categorySearch: document.getElementById('categorySearch'),
     categoryTableBody: document.querySelector('#categoryTable tbody'),
     fixedTableBody: document.querySelector('#fixedTable tbody'),
@@ -2124,8 +1946,22 @@ function init() {
     spendingHeatmap: document.getElementById('spendingHeatmap'),
     chartReportCategory: document.getElementById('chartReportCategory'),
     chartReportMonthly: document.getElementById('chartReportMonthly'),
+    chartReportTopIncome: document.getElementById('chartReportTopIncome'),
     chartReportPayment: document.getElementById('chartReportPayment'),
+    reportSummary: document.getElementById('reportSummary'),
+    reportsEmptyState: document.getElementById('reportsEmptyState'),
+    analysisChapterTabs: document.getElementById('analysisChapterTabs'),
+    reportsEmptyAddTransaction: document.getElementById('reportsEmptyAddTransaction'),
     reportTopIncomeMonth: document.getElementById('reportTopIncomeMonth'),
+    positionAccountBalance: document.getElementById('positionAccountBalance'),
+    positionProjectedBalance: document.getElementById('positionProjectedBalance'),
+    positionCofferBalance: document.getElementById('positionCofferBalance'),
+    positionCofferComposition: document.getElementById('positionCofferComposition'),
+    positionNetWorth: document.getElementById('positionNetWorth'),
+    positionPendingIncome: document.getElementById('positionPendingIncome'),
+    positionPendingExpense: document.getElementById('positionPendingExpense'),
+    positionScheduledIncome: document.getElementById('positionScheduledIncome'),
+    positionScheduledExpense: document.getElementById('positionScheduledExpense'),
     projectionSummary: document.getElementById('projectionSummary'),
     projectionList: document.getElementById('projectionList'),
     purchaseValue: document.getElementById('purchaseValue'),
@@ -2150,6 +1986,15 @@ function init() {
     savingsCapacity: document.getElementById('savingsCapacity'),
     sixMonthProjection: document.getElementById('sixMonthProjection'),
     safeInstallmentLimit: document.getElementById('safeInstallmentLimit'),
+    futureStartingBalance: document.getElementById('futureStartingBalance'),
+    futureMonthlyContribution: document.getElementById('futureMonthlyContribution'),
+    futureCdiAnnual: document.getElementById('futureCdiAnnual'),
+    futureScenario: document.getElementById('futureScenario'),
+    futureInflation: document.getElementById('futureInflation'),
+    futureYears: document.getElementById('futureYears'),
+    calculateLongTermProjectionButton: document.getElementById('calculateLongTermProjection'),
+    longTermProjectionResult: document.getElementById('longTermProjectionResult'),
+    chartLongTermProjection: document.getElementById('chartLongTermProjection'),
     limitTableBody: document.querySelector('#limitTable tbody'),
     rawDataEditor: document.getElementById('rawDataEditor'),
     themeBg: document.getElementById('themeBg'),
@@ -2181,17 +2026,34 @@ function init() {
     goalForm: document.getElementById('goalForm'),
     goalName: document.getElementById('goalName'),
     goalTarget: document.getElementById('goalTarget'),
-    goalColor: document.getElementById('goalColor')
+    goalColor: document.getElementById('goalColor'),
+    cofferList: document.getElementById('cofferList'),
+    cofferTotalBalance: document.getElementById('cofferTotalBalance'),
+    cofferPrincipalTotal: document.getElementById('cofferPrincipalTotal'),
+    cofferYieldTotal: document.getElementById('cofferYieldTotal'),
+    creditCardList: document.getElementById('creditCardList'),
+    creditInvoiceList: document.getElementById('creditInvoiceList'),
+    creditTotalLimit: document.getElementById('creditTotalLimit'),
+    creditUsedLimit: document.getElementById('creditUsedLimit'),
+    creditAvailableLimit: document.getElementById('creditAvailableLimit'),
+    creditOpenInvoices: document.getElementById('creditOpenInvoices'),
+    creditCardForm: document.getElementById('creditCardForm'),
+    creditInvoicePaymentForm: document.getElementById('creditInvoicePaymentForm'),
+    creditInvoicePaymentSource: document.getElementById('creditInvoicePaymentSource'),
+    creditInvoicePaymentCoffer: document.getElementById('creditInvoicePaymentCoffer')
   };
 
   loadState();
   applyTheme();
   buildNavigation();
+  initializeChapterTabs();
   populateSelects();
   renderDashboard();
   renderTransactionTable();
   renderCategoryTable();
   renderFixedTable();
+  renderCoffers();
+  renderCreditCards();
   renderReportPage();
   renderLimitsTable();
   renderTrashStatus();
@@ -2210,35 +2072,115 @@ function init() {
 }
 
 function buildNavigation() {
-  dom.navLinks.forEach((button) => {
-    button.addEventListener('click', () => {
-      dom.navLinks.forEach((nav) => nav.classList.remove('active'));
-      button.classList.add('active');
-      const target = button.dataset.target;
-
-      // Mostrar aviso ao acessar admin
-      if (target === 'admin') {
-        showAdminWarning();
-      }
-
-      document.querySelectorAll('.page-panel').forEach((panel) => {
-        panel.classList.toggle('active', panel.id === target);
-      });
-      dom.pageTitle.textContent = button.textContent.trim();
-
-      // Renderizar página específica se necessário
-      if (target === 'reports') {
-        renderReportPage();
-      } else if (target === 'help') {
-        renderHelpPage();
-      }
+  document.querySelectorAll('.page-panel').forEach((panel) => {
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-hidden', String(!panel.classList.contains('active')));
+  });
+  const selectPage = (button) => {
+    dom.navLinks.forEach((nav) => {
+      const selected = nav === button;
+      nav.classList.toggle('active', selected);
+      nav.setAttribute('aria-selected', String(selected));
+      nav.tabIndex = selected ? 0 : -1;
     });
+    const target = button.dataset.target;
+
+    if (target === 'admin') showAdminWarning();
+    document.querySelectorAll('.page-panel').forEach((panel) => {
+      const selected = panel.id === target;
+      panel.classList.toggle('active', selected);
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-hidden', String(!selected));
+    });
+    dom.pageTitle.textContent = button.textContent.trim();
+
+    if (target === 'dashboard') renderDashboard();
+    else if (target === 'transactions') renderTransactionTable();
+    else if (target === 'categories') renderCategoryTable();
+    else if (target === 'fixed') renderFixedTable();
+    else if (target === 'reports') renderReportPage();
+    else if (target === 'help') renderHelpPage();
+    else if (target === 'coffers') renderCoffers();
+    else if (target === 'creditCards') renderCreditCards();
+    else if (target === 'admin') renderLimitsTable();
+    closeMobileMenu();
+  };
+  dom.navLinks.forEach((button) => {
+    button.tabIndex = button.classList.contains('active') ? 0 : -1;
+    button.addEventListener('click', () => selectPage(button));
+    button.addEventListener('keydown', (event) => {
+      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = Array.from(dom.navLinks).indexOf(button);
+      const nextIndex = event.key === 'Home' ? 0
+        : event.key === 'End' ? dom.navLinks.length - 1
+          : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + dom.navLinks.length) % dom.navLinks.length;
+      const next = dom.navLinks[nextIndex];
+      selectPage(next);
+      next.focus();
+    });
+  });
+}
+
+function selectChapterTab(groupName, chapterName, moveFocus = false) {
+  const tabList = document.querySelector(`.chapter-tabs[data-chapter-group="${groupName}"]`);
+  if (!tabList) return;
+  const tabs = Array.from(tabList.querySelectorAll('[data-chapter-tab]'));
+  const panels = Array.from(document.querySelectorAll(`[data-chapter-scope="${groupName}"]`));
+  tabs.forEach((tab) => {
+    const selected = tab.dataset.chapterTab === chapterName;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && moveFocus) tab.focus();
+  });
+  panels.forEach((panel) => {
+    const selected = panel.dataset.chapter === chapterName;
+    panel.hidden = !selected;
+    panel.setAttribute('aria-hidden', String(!selected));
+  });
+}
+
+function initializeChapterTabs() {
+  document.querySelectorAll('.chapter-tabs[data-chapter-group]').forEach((tabList) => {
+    const groupName = tabList.dataset.chapterGroup;
+    const tabs = Array.from(tabList.querySelectorAll('[data-chapter-tab]'));
+    const panels = Array.from(document.querySelectorAll(`[data-chapter-scope="${groupName}"]`));
+    tabs.forEach((tab, index) => {
+      const tabId = `${groupName}-${tab.dataset.chapterTab}-tab`;
+      tab.id = tabId;
+      tab.setAttribute('role', 'tab');
+      if (!tab.hasAttribute('aria-selected')) tab.setAttribute('aria-selected', String(index === 0));
+      tab.addEventListener('click', () => selectChapterTab(groupName, tab.dataset.chapterTab));
+      tab.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const currentIndex = tabs.indexOf(tab);
+        const nextIndex = event.key === 'Home' ? 0
+          : event.key === 'End' ? tabs.length - 1
+            : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        selectChapterTab(groupName, tabs[nextIndex].dataset.chapterTab, true);
+      });
+      const associatedPanels = panels.filter((panel) => panel.dataset.chapter === tab.dataset.chapterTab);
+      associatedPanels.forEach((panel, panelIndex) => {
+        if (!panel.id) panel.id = `${tabId}-panel-${panelIndex + 1}`;
+        panel.setAttribute('role', 'tabpanel');
+        panel.setAttribute('aria-labelledby', tabId);
+        panel.tabIndex = 0;
+      });
+      tab.setAttribute('aria-controls', associatedPanels.map((panel) => panel.id).join(' '));
+    });
+    const selected = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true') || tabs[0];
+    if (!selected) return;
+    selectChapterTab(groupName, selected.dataset.chapterTab);
   });
 }
 
 function populateSelects() {
   // Get unique years that have transactions
-  const yearsWithData = Array.from(new Set(state.transactions.map((item) => new Date(item.date).getFullYear()))).sort((a,b)=>a-b);
+  const yearsWithData = Array.from(new Set(
+    state.transactions.map((item) => normalizeDate(item.date)?.getFullYear()).filter(Number.isInteger)
+  )).sort((a, b) => a - b);
 
   // Clear existing options
   dom.dashboardYear.innerHTML = '';
@@ -2275,6 +2217,12 @@ function populateSelects() {
   dom.reportYear.value = state.reportYear;
 
   rebuildCategoryDropdowns();
+  rebuildCofferSelect();
+  populateCofferSettingsForm();
+  renderFxRates();
+  updateCurrencyValueLabel();
+  const inflationInput = document.getElementById('annualInflationRate');
+  if (inflationInput) inflationInput.value = ((state.settings.annualInflationBps || 0) / 100).toFixed(2);
 }
 
 function updateMonthSelectsForYear(yearSelector, monthSelector) {
@@ -2284,10 +2232,9 @@ function updateMonthSelectsForYear(yearSelector, monthSelector) {
 
   if (selectedYear === 'all') {
     // Get all unique month-year combinations
-    const monthYearPairs = state.transactions.map((item) => {
-      const date = new Date(item.date);
-      return `${date.getFullYear()}-${date.getMonth() + 1}`;
-    });
+    const monthYearPairs = state.transactions
+      .filter((item) => normalizeDate(item.date))
+      .map((item) => `${item.date.slice(0, 4)}-${Number(item.date.slice(5, 7))}`);
     monthsWithData = Array.from(new Set(monthYearPairs)).map(pair => {
       const [year, month] = pair.split('-').map(Number);
       return { year, month };
@@ -2297,8 +2244,8 @@ function updateMonthSelectsForYear(yearSelector, monthSelector) {
     const year = Number(selectedYear);
     monthsWithData = Array.from(new Set(
       state.transactions
-        .filter(item => new Date(item.date).getFullYear() === year)
-        .map(item => new Date(item.date).getMonth() + 1)
+        .filter(item => normalizeDate(item.date)?.getFullYear() === year)
+        .map(item => Number(item.date.slice(5, 7)))
     )).sort((a,b)=>a-b).map(month => ({ year, month }));
   }
 
@@ -2341,10 +2288,41 @@ function updateMonthSelectsForYear(yearSelector, monthSelector) {
 
 function rebuildCategoryDropdowns() {
   const categories = state.categories.filter((cat) => cat.type !== 'both' ? cat.type === 'expense' || cat.type === 'income' : true);
-  const categoryOptions = categories.map((cat) => `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`).join('');
-  dom.transactionCategory.innerHTML = categoryOptions;
-  dom.fixedCategory.innerHTML = categories.filter((cat) => cat.type !== 'income').map((cat) => `<option value="${cat.id}">${cat.icon} ${cat.name}</option>`).join('');
-  dom.transactionCategoryFilter.innerHTML = `<option value="all">Todas</option>${categoryOptions}`;
+  const fill = (select, items, includeAll = false) => {
+    if (!select) return;
+    const options = [];
+    if (includeAll) {
+      const all = document.createElement('option');
+      all.value = 'all';
+      all.textContent = 'Todas';
+      options.push(all);
+    }
+    for (const category of items) {
+      const option = document.createElement('option');
+      option.value = category.id;
+      option.textContent = `${category.icon} ${category.name}`;
+      options.push(option);
+    }
+    select.replaceChildren(...options);
+  };
+  fill(dom.transactionCategory, categories);
+  fill(dom.fixedCategory, categories.filter((cat) => cat.type !== 'income'));
+  fill(dom.transactionCategoryFilter, categories, true);
+}
+
+function rebuildTransactionCategoryOptions(type = 'expense') {
+  const select = document.getElementById('transactionCategory');
+  if (!select) return;
+  const categories = state.categories.filter((category) =>
+    category.type === type || category.type === 'both'
+  );
+  const options = categories.map((category) => {
+    const option = document.createElement('option');
+    option.value = category.id;
+    option.textContent = `${category.icon} ${category.name}`;
+    return option;
+  });
+  select.replaceChildren(...options);
 }
 
 function getCurrentFilters() {
@@ -2376,37 +2354,46 @@ function renderDashboard() {
   let dashboardData = calcCache.get(cacheKey);
   
   if (!dashboardData) {
-    const monthlyTransactions = state.transactions.filter((transaction) => {
-      const date = new Date(transaction.date);
-      const yearMatch = year === null || date.getFullYear() === year;
-      const monthMatch = month === null || date.getMonth() + 1 === month;
-      return yearMatch && monthMatch;
-    });
+    const monthlyTransactions = state.transactions.filter((item) => periodMatches(item.date, year, month));
+    const realizedTransactions = monthlyTransactions.filter((item) => item.status === 'paid');
+    const incomeTotal = calculatePeriodTotals(state.transactions, year, month).incomeCents;
+    const expenseTotal = calculatePeriodTotals(state.transactions, year, month).expenseCents;
+    const previousMonthBalance = calculateBalanceUpToPreviousMonth(year, month);
+    let balance;
+    if (year !== null && month !== null) {
+      const periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
+      const periodEnd = dateKey(new Date(year, month, 0));
+      const initialBalanceInPeriod = (state.initialBalances || []).reduce((sum, item) => (
+        item.date >= periodStart && item.date <= periodEnd
+          ? sum + (Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))
+          : sum
+      ), 0);
+      balance = (previousMonthBalance || 0) + initialBalanceInPeriod + incomeTotal - expenseTotal;
+    } else if (year !== null) {
+      balance = calculateAccountBalanceAt(
+        state.transactions,
+        state.initialBalances || [],
+        `${year}-12-31`
+      );
+    } else {
+      balance = calculateCurrentBalance();
+    }
 
-    // Calcular saldo inicial (transações com subcategoria "Saldo inicial")
-    const initialBalance = monthlyTransactions
-      .filter((item) => item.subcategory && item.subcategory.toLowerCase() === 'saldo inicial')
-      .reduce((sum, item) => sum + item.value, 0);
-
-    const incomeTotal = monthlyTransactions.filter((item) => item.type === 'income').reduce((sum, item) => sum + item.value, 0);
-    const expenseTotal = monthlyTransactions.filter((item) => item.type === 'expense').reduce((sum, item) => sum + item.value, 0);
-    
-    const previousMonthBalance = month !== null
-      ? calculateBalanceUpToPreviousMonth(year, month)
-      : 0;
-    
-    const balance = previousMonthBalance + incomeTotal - expenseTotal;
-    
-    const topExpense = monthlyTransactions.filter((item) => item.type === 'expense').reduce((max, item) => Math.max(max, item.value), 0);
-    const uniqueDays = new Set(monthlyTransactions.map((item) => new Date(item.date).toISOString().slice(0, 10))).size || 1;
-    const average = expenseTotal / uniqueDays;
-    const savedRate = incomeTotal ? Math.max(0, Math.round(((incomeTotal - expenseTotal) / incomeTotal) * 100)) : 0;
+    const unsettledTotals = calculateUnsettledPeriodTotals(state.transactions, year, month);
+    const unsettledNet = unsettledTotals.pendingIncomeCents - unsettledTotals.pendingExpenseCents
+      + unsettledTotals.scheduledIncomeCents - unsettledTotals.scheduledExpenseCents;
+    const topExpense = realizedTransactions
+      .filter((item) => item.type === 'expense')
+      .reduce((max, item) => Math.max(max, Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value)), 0);
+    const average = calculateDailyExpenseAverage(state.transactions, year, month);
+    const savedRate = calculateSavingsRate(incomeTotal, expenseTotal);
     
     dashboardData = {
-      initialBalance,
+      initialBalance: previousMonthBalance,
       incomeTotal,
       expenseTotal,
       balance,
+      projectedBalance: balance + unsettledNet,
       topExpense,
       average,
       savedRate,
@@ -2417,18 +2404,46 @@ function renderDashboard() {
   }
 
   // Aplicar dados cacheados
-  dom.cardBalance.textContent = formatCurrency(dashboardData.balance);
-  dom.cardInitialBalance.textContent = formatCurrency(dashboardData.previousMonthBalance);
-  dom.cardIncome.textContent = formatCurrency(dashboardData.incomeTotal);
-  dom.cardExpense.textContent = formatCurrency(dashboardData.expenseTotal);
-  dom.cardTopExpense.textContent = formatCurrency(dashboardData.topExpense);
-  dom.cardDailyAverage.textContent = formatCurrency(dashboardData.average);
-  dom.cardSavedRate.textContent = `${dashboardData.savedRate}%`;
+  dom.cardBalance.textContent = formatCurrencyFromCents(dashboardData.balance);
+  dom.cardProjectedBalance?.replaceChildren(
+    document.createTextNode(formatCurrencyFromCents(dashboardData.projectedBalance))
+  );
+  dom.cardInitialBalance.textContent = dashboardData.previousMonthBalance === null
+    ? '—'
+    : formatCurrencyFromCents(dashboardData.previousMonthBalance);
+  dom.cardIncome.textContent = formatCurrencyFromCents(dashboardData.incomeTotal);
+  dom.cardExpense.textContent = formatCurrencyFromCents(dashboardData.expenseTotal);
+  dom.cardTopExpense.textContent = formatCurrencyFromCents(dashboardData.topExpense);
+  dom.cardDailyAverage.textContent = formatCurrencyFromCents(dashboardData.average);
+  dom.cardSavedRate.textContent = dashboardData.savedRate === null
+    ? '—'
+    : `${dashboardData.savedRate.toFixed(1).replace('.', ',')}%`;
+  renderFinancialPosition();
+  const hasCofferBalance = state.coffers.some((coffer) => (
+    calculateCofferBalance(coffer, state.transactions).totalCents > 0
+  ));
+  const hasAnyFinancialData = state.transactions.length > 0
+    || state.initialBalances.length > 0
+    || hasCofferBalance;
+  const hasRealizedActivity = state.transactions.some((item) => item.status === 'paid');
+  dom.dashboardPage.classList.toggle('is-empty', !hasAnyFinancialData);
+  dom.dashboardEmptyState.hidden = hasAnyFinancialData;
+  dom.dashboardChapterTabs.hidden = !hasAnyFinancialData;
+  dom.dashboardGoalsSection.hidden = state.goals.length === 0;
+  const indicatorsTab = dom.dashboardChapterTabs.querySelector('[data-chapter-tab="indicators"]');
+  const trendsTab = dom.dashboardChapterTabs.querySelector('[data-chapter-tab="trends"]');
+  indicatorsTab.hidden = !hasRealizedActivity;
+  trendsTab.hidden = !hasRealizedActivity;
+  if (!hasRealizedActivity) selectChapterTab('dashboard', 'summary');
 
   const selectedPeriod = `${yearValue === 'all' ? 'Todos os anos' : yearValue} / ${monthValue === 'all' ? 'Todos os meses' : labelsMonths[Number(monthValue) - 1]}`;
-  const periodInfo = month !== null
-    ? 'Saldo anterior inclui o fechamento do mês anterior ao mês selecionado.'
-    : 'Saldo anterior não se aplica quando todos os meses são exibidos.';
+  const periodInfo = year !== null
+    ? `Saldo realizado no período; saldo anterior calculado antes de ${month === null ? 'janeiro' : labelsMonths[month - 1]}.`
+    : dashboardData.previousMonthBalance === null
+      ? 'Filtro agregado sem período com dados para calcular saldo anterior; saldo realizado e previsto mostram o valor atual.'
+      : month === null
+        ? 'Filtro agregado: saldo anterior considera o primeiro mês com dados; saldo realizado e previsto mostram o valor atual.'
+        : `Filtro agregado: saldo anterior considera a primeira ocorrência de ${labelsMonths[month - 1]} com dados; saldo realizado e previsto mostram o valor atual.`;
   dom.dashboardFilterSummary.textContent = `Visualizando: ${selectedPeriod}. ${periodInfo}`;
   dom.dashboardFilterSummary.title = `O período filtrado determina quais transações são consideradas. ${periodInfo}`;
   
@@ -2495,7 +2510,7 @@ function buildCharts(year, month) {
       labels: topExpenses.map((item) => item.description),
       datasets: [{ label: 'Maior gasto', data: topExpenses.map((item) => item.value), backgroundColor: 'rgba(245,158,11,0.8)' }]
     },
-    options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } }, scales: chartScaleOptions(true) }
+    options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } }, scales: chartScaleOptions() }
   });
 }
 
@@ -2505,10 +2520,8 @@ function sumByPeriod(year, month, type) {
   let cached = calcCache.get(cacheKey);
   if (cached !== null) return cached;
   
-  const result = state.transactions.reduce((total, item) => {
-    const date = new Date(item.date);
-    return date.getFullYear() === year && date.getMonth() + 1 === month && item.type === type ? total + item.value : total;
-  }, 0);
+  const period = calculatePeriodTotals(state.transactions, year, month);
+  const result = fromCents(type === 'income' ? period.incomeCents : period.expenseCents);
   
   calcCache.set(cacheKey, result);
   return result;
@@ -2522,10 +2535,10 @@ function aggregateCategoryExpenses(year, month) {
   
   const result = {};
   state.transactions.forEach((item) => {
-    const date = new Date(item.date);
-    if (date.getFullYear() === year && date.getMonth() + 1 === month && item.type === 'expense') {
+    if (periodMatches(item.date, year, month) && isCategoryExpenseIncluded(item)) {
       const category = getCategory(item.category)?.name || item.category;
-      result[category] = (result[category] || 0) + item.value;
+      const amount = Number.isSafeInteger(item.valueCents) ? fromCents(item.valueCents) : item.value;
+      result[category] = (result[category] || 0) + amount;
     }
   });
   
@@ -2542,10 +2555,9 @@ function getTopExpenses(year, month, limit) {
   
   const result = state.transactions
     .filter((item) => {
-      const date = new Date(item.date);
-      return date.getFullYear() === year && date.getMonth() + 1 === month && item.type === 'expense';
+      return periodMatches(item.date, year, month) && isCategoryExpenseIncluded(item);
     })
-    .sort((a, b) => b.value - a.value)
+    .sort((a, b) => (b.valueCents || toCents(b.value)) - (a.valueCents || toCents(a.value)))
     .slice(0, limit)
     .map((item) => ({ description: item.description, value: item.value }));
   
@@ -2560,7 +2572,7 @@ function renderChart(existingChart, canvasElement, config) {
   return new Chart(canvasElement, config);
 }
 
-function chartScaleOptions(_horizontal = false) {
+function chartScaleOptions() {
   return {
     x: { ticks: { color: '#cbd5e1' }, grid: { color: 'rgba(148,163,184,0.12)' } },
     y: { ticks: { color: '#cbd5e1' }, grid: { color: 'rgba(148,163,184,0.12)' } }
@@ -2585,21 +2597,23 @@ function renderTransactionTable() {
   const typeFilter = dom.transactionTypeFilter.value;
   const categoryFilter = dom.transactionCategoryFilter.value;
   const filtered = state.transactions.filter((transaction) => {
-    const date = new Date(transaction.date);
-    const yearMatch = year === 'all' || date.getFullYear() === Number(year);
-    const monthMatch = month === 'all' || date.getMonth() + 1 === Number(month);
+    const matchesDate = periodMatches(
+      transaction.date,
+      year === 'all' ? null : Number(year),
+      month === 'all' ? null : Number(month)
+    );
     const typeMatch = typeFilter === 'all' || transaction.type === typeFilter;
     const categoryMatch = categoryFilter === 'all' || transaction.category === categoryFilter;
     const textMatch = [transaction.description, transaction.subcategory, getCategory(transaction.category)?.name || '']
       .join(' ').toLowerCase().includes(search);
-    return yearMatch && monthMatch && typeMatch && categoryMatch && textMatch;
+    return matchesDate && typeMatch && categoryMatch && textMatch;
   });
 
   const sorted = filtered.sort((a, b) => {
     const key = state.sort.key;
     const direction = state.sort.order === 'asc' ? 1 : -1;
     if (key === 'value') return (a.value - b.value) * direction;
-    if (key === 'date') return (new Date(a.date) - new Date(b.date)) * direction;
+    if (key === 'date') return a.date.localeCompare(b.date) * direction;
     if (key === 'category') return ((getCategory(a.category)?.name || a.category).localeCompare(getCategory(b.category)?.name || b.category)) * direction;
     if (key === 'status') return a.status.localeCompare(b.status) * direction;
     if (key === 'type') return a.type.localeCompare(b.type) * direction;
@@ -2613,9 +2627,16 @@ function renderTransactionTable() {
   const pageData = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   // PHASE 2: Sanitizar dados renderizados
-  dom.transactionTableBody.innerHTML = pageData.map((item) => {
+  dom.transactionTableBody.innerHTML = pageData.length === 0
+    ? `<tr><td colspan="9" class="table-empty-state">${filtered.length ? 'Não há mais lançamentos nesta página.' : 'Nenhum lançamento corresponde a estes filtros.'}</td></tr>`
+    : pageData.map((item) => {
     const category = getCategory(item.category);
-    const categoryLabel = category ? `${category.icon} ${sanitizeHtml(category.name)}` : sanitizeHtml(item.category);
+    const coffer = state.coffers.find((entry) => entry.id === item.cofferId);
+    const categoryLabel = category
+      ? `${sanitizeHtml(category.icon)} ${sanitizeHtml(category.name)}`
+      : item.cofferId
+        ? `Cofrinho: ${sanitizeHtml(coffer?.name || 'removido')}`
+        : sanitizeHtml(item.category || '—');
     const safeSubcategory = sanitizeHtml(item.subcategory || '-');
     const safeDescription = sanitizeHtml(item.description);
     const safePayment = sanitizeHtml(item.payment || '-');
@@ -2623,19 +2644,44 @@ function renderTransactionTable() {
       <td>${item.date}</td>
       <td>${categoryLabel}</td>
       <td>${safeSubcategory}</td>
-      <td>${item.type === 'income' ? 'Entrada' : 'Saída'}</td>
+      <td>${item.type === 'income' ? 'Entrada' : item.type === 'transfer' ? 'Transferência' : 'Saída'}</td>
       <td>${safeDescription}</td>
-      <td>${formatCurrency(item.value)}</td>
+      <td>${formatCurrencyFromCents(Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))}</td>
       <td>${safePayment}</td>
       <td>${formatStatus(item.status)}</td>
       <td>
-        <button type="button" class="secondary-button" data-action="edit" data-id="${item.id}"><i class="fa-solid fa-pen"></i></button>
-        <button type="button" class="danger-button" data-action="delete" data-id="${item.id}"><i class="fa-solid fa-trash"></i></button>
+        <button type="button" class="secondary-button" data-action="edit" data-id="${sanitizeHtml(item.id)}" aria-label="Editar lançamento"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        <button type="button" class="danger-button" data-action="delete" data-id="${sanitizeHtml(item.id)}" aria-label="Excluir lançamento"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </td>
     </tr>`;
-  }).join('');
+    }).join('');
 
   buildPagination(Math.ceil(sorted.length / pageSize));
+  renderUpcomingTransactions();
+}
+
+function renderUpcomingTransactions() {
+  if (!dom.upcomingTransactionsList) return;
+  const upcoming = state.transactions
+    .filter((item) => item.status === 'pending' || item.status === 'scheduled')
+    .sort((left, right) => left.date.localeCompare(right.date));
+  if (upcoming.length === 0) {
+    dom.upcomingTransactionsList.innerHTML = '<p class="empty-state">Nenhum boleto ou agendamento por enquanto.</p>';
+    return;
+  }
+
+  dom.upcomingTransactionsList.innerHTML = upcoming.map((item) => {
+    const category = getCategory(item.category);
+    const coffer = state.coffers.find((entry) => entry.id === item.cofferId);
+    const detail = category?.name || coffer?.name || item.category || 'Sem categoria';
+    const valueCents = Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value);
+    return `<article class="upcoming-row">
+      <time datetime="${sanitizeHtml(item.date)}">${sanitizeHtml(item.date)}</time>
+      <div class="upcoming-description"><strong>${sanitizeHtml(item.description)}</strong><span>${sanitizeHtml(detail)}</span></div>
+      <span class="status-pill status-${sanitizeHtml(item.status)}">${sanitizeHtml(formatStatus(item.status))}</span>
+      <strong class="upcoming-value">${item.type === 'expense' ? '−' : '+'}${formatCurrencyFromCents(valueCents)}</strong>
+    </article>`;
+  }).join('');
 }
 
 function buildPagination(pageCount) {
@@ -2662,29 +2708,37 @@ function getCategory(id) {
   return state.categories.find((category) => category.id === id);
 }
 
+function isCategoryExpenseIncluded(transaction) {
+  return transaction.type === 'expense'
+    && (transaction.status === 'paid' || transaction.sourceType === 'creditPurchase');
+}
+
 function renderCategoryTable() {
   const search = dom.categorySearch.value.trim().toLowerCase();
   const categories = state.categories.filter((category) => category.name.toLowerCase().includes(search));
-  // PHASE 2: Sanitizar dados renderizados
   dom.categoryTableBody.innerHTML = categories.map((category) => {
     const safeName = sanitizeHtml(category.name);
     const subcats = category.subcategories?.map(s => sanitizeHtml(s)).join(', ') || '-';
-    const limit = category.limit ? formatCurrency(category.limit) : '-';
-    const actions = `<button type="button" class="secondary-button" data-action="edit-category" data-id="${category.id}"><i class="fa-solid fa-pen"></i></button><button type="button" class="danger-button" data-action="delete-category" data-id="${category.id}"><i class="fa-solid fa-trash"></i></button>`;
-    return `<tr><td>${category.icon} ${safeName}</td><td>${category.type === 'income' ? 'Entrada' : category.type === 'expense' ? 'Saída' : 'Ambos'}</td><td>${subcats}</td><td>${category.icon}</td><td>${limit}</td><td>${actions}</td></tr>`;
+    const limitCents = Number.isSafeInteger(category.limitCents)
+      ? category.limitCents
+      : toCents(category.limit || 0);
+    const limit = limitCents ? formatCurrencyFromCents(limitCents) : '-';
+    const actions = category.preset
+      ? '<span aria-label="Categoria padrão protegida">Padrão protegida</span>'
+      : `<button type="button" class="secondary-button" data-action="edit-category" data-id="${sanitizeHtml(category.id)}" aria-label="Editar categoria ${safeName}"><i class="fa-solid fa-pen" aria-hidden="true"></i></button><button type="button" class="danger-button" data-action="delete-category" data-id="${sanitizeHtml(category.id)}" aria-label="Excluir categoria ${safeName}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>`;
+    return `<tr><td>${sanitizeHtml(category.icon)} ${safeName}</td><td>${category.type === 'income' ? 'Entrada' : category.type === 'expense' ? 'Saída' : 'Ambos'}</td><td>${subcats}</td><td>${sanitizeHtml(category.icon)}</td><td>${limit}</td><td>${actions}</td></tr>`;
   }).join('');
 }
 
 function renderFixedTable() {
-  const today = new Date();
-  const totalFixed = state.fixedExpenses.reduce((sum, item) => sum + item.value, 0);
-  if (dom.fixedTotalSummary) dom.fixedTotalSummary.textContent = formatCurrency(totalFixed);
+  const totalFixedCents = state.fixedExpenses.reduce((sum, item) => (
+    sum + (Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))
+  ), 0);
+  if (dom.fixedTotalSummary) dom.fixedTotalSummary.textContent = formatCurrencyFromCents(totalFixedCents);
 
   // PHASE 2: Sanitizar dados renderizados
   dom.fixedTableBody.innerHTML = state.fixedExpenses.map((item) => {
     const category = getCategory(item.category);
-    const dueDate = new Date(today.getFullYear(), today.getMonth(), item.day);
-    const nearDue = item.active && daysBetween(today, dueDate) <= 5 && daysBetween(today, dueDate) >= 0;
     const typeLabel = item.type === 'fixed' ? '🔄 Fixo' : '📅 Variável';
     const durationText = item.type === 'variable' && item.duration ? `${item.duration} mês${item.duration > 1 ? 'es' : ''}` : '-';
     const safeDescription = sanitizeHtml(item.description);
@@ -2692,26 +2746,928 @@ function renderFixedTable() {
     return `<tr>
       <td>${safeDescription}</td>
       <td>${category ? `${category.icon} ${categoryName}` : categoryName}</td>
-      <td>${formatCurrency(item.value)}</td>
+      <td>${formatCurrencyFromCents(Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))}</td>
       <td>${typeLabel}</td>
       <td>${item.day}</td>
       <td>${durationText}</td>
       <td>${item.active ? 'Sim' : 'Não'}</td>
       <td>
-        <button type="button" class="secondary-button" data-action="edit-fixed" data-id="${item.id}"><i class="fa-solid fa-pen"></i></button>
-        <button type="button" class="danger-button" data-action="delete-fixed" data-id="${item.id}"><i class="fa-solid fa-trash"></i></button>
+        <button type="button" class="secondary-button" data-action="edit-fixed" data-id="${sanitizeHtml(item.id)}" aria-label="Editar gasto fixo"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        <button type="button" class="danger-button" data-action="delete-fixed" data-id="${sanitizeHtml(item.id)}" aria-label="Excluir gasto fixo"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </td>
     </tr>`;
   }).join('');
 }
 
-function daysBetween(a, b) {
-  const diff = Math.ceil((b - a) / (1000 * 60 * 60 * 24));
-  return diff;
+function updateCurrencyValueLabel() {
+  const label = document.getElementById('transactionValueLabel');
+  if (!label) return;
+  const displayCurrency = state.settings?.currency || BASE_CURRENCY;
+  label.textContent = displayCurrency === BASE_CURRENCY
+    ? 'Valor em BRL'
+    : `Valor em ${displayCurrency} (convertido para BRL na data do lançamento)`;
+}
+
+function renderFxRates() {
+  const list = document.getElementById('fxRatesList');
+  const dateInput = document.getElementById('fxRateDate');
+  if (!list) return;
+  if (dateInput && !dateInput.value) dateInput.value = dateKey(new Date());
+  const rates = (state.fxRates || []).slice()
+    .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate) || a.currency.localeCompare(b.currency));
+  list.innerHTML = rates.map((rate) => `
+    <div class="trash-item">
+      <span>1 ${sanitizeHtml(rate.currency)} = ${formatMoneyFromCents(rate.rateToBaseMicros / 10000, BASE_CURRENCY)} · desde ${sanitizeHtml(rate.effectiveDate)}</span>
+      <button type="button" class="danger-button small" data-action="delete-fx-rate" data-id="${sanitizeHtml(rate.id)}" aria-label="Excluir taxa ${sanitizeHtml(rate.currency)} de ${sanitizeHtml(rate.effectiveDate)}">Excluir</button>
+    </div>
+  `).join('') || '<p class="field-help">Nenhuma taxa registrada. A moeda de exibição permanece BRL.</p>';
+}
+
+function addFxRate() {
+  const currency = document.getElementById('fxRateCurrency').value;
+  const rateValue = Number(document.getElementById('fxRateValue').value);
+  const effectiveDate = document.getElementById('fxRateDate').value;
+  if (currency === BASE_CURRENCY || !SUPPORTED_CURRENCIES[currency]
+    || !Number.isFinite(rateValue) || rateValue <= 0
+    || !normalizeDate(effectiveDate)) {
+    showToast('Informe moeda, taxa positiva e data válida.', 'error');
+    return;
+  }
+  const rateToBaseMicros = Math.round(rateValue * FX_RATE_SCALE);
+  if (!Number.isSafeInteger(rateToBaseMicros) || rateToBaseMicros <= 0) {
+    showToast('A taxa excede o intervalo seguro.', 'error');
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  const existing = state.fxRates.find((item) => item.currency === currency && item.effectiveDate === effectiveDate);
+  const rate = {
+    ...(existing || {}),
+    id: existing?.id || createId(),
+    currency,
+    effectiveDate,
+    rateToBaseMicros,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
+  if (existing) {
+    state.fxRates[state.fxRates.indexOf(existing)] = rate;
+  } else {
+    state.fxRates.push(rate);
+  }
+  saveState();
+  renderFxRates();
+  const currencySelect = document.getElementById('currencySelect');
+  if (currencySelect?.value === currency) renderAllUI();
+  updateRawEditor();
+  showToast(`Taxa registrada: 1 ${currency} = ${rateValue} BRL desde ${effectiveDate}.`, 'success');
+}
+
+function rebuildCofferSelect() {
+  const select = dom.transactionCoffer || document.getElementById('transactionCoffer');
+  if (!select) return;
+  const selected = select.value;
+  const placeholder = document.createElement('option');
+  placeholder.textContent = 'Selecione um cofrinho';
+  placeholder.value = '';
+  const options = [placeholder];
+  for (const coffer of state.coffers) {
+    const option = document.createElement('option');
+    option.textContent = `${coffer.icon || '💰'} ${coffer.name}${coffer.active ? '' : ' (inativo)'}`;
+    option.value = coffer.id;
+    options.push(option);
+  }
+  select.replaceChildren(...options);
+  if (state.coffers.some((item) => item.id === selected)) select.value = selected;
+}
+
+function populateCofferSettingsForm() {
+  const rules = state.cofferSettings || createEmptyState().cofferSettings;
+  const values = {
+    cofferCdiAnnual: (rules.annualCdiBps / 100).toFixed(2),
+    cofferCommonBase: (rules.commonBaseBps / 100).toFixed(2),
+    cofferCommonBonus: (rules.commonBonusBps / 100).toFixed(2),
+    cofferCommonCap: fromCents(rules.commonTierCapCents),
+    cofferTurnBonus: (rules.turnBonusBps / 100).toFixed(2),
+    cofferTurnCap: fromCents(rules.turnTierCapCents),
+    cofferTurnStart: rules.turnStartDate,
+    cofferTurnEnd: rules.turnEndDate,
+    cofferMarketplaceBonus: (rules.marketplaceBonusBps / 100).toFixed(2),
+    cofferMarketplacePromoEnd: rules.marketplacePromoEndDate,
+    cofferMarketplaceLimit: fromCents(rules.marketplaceDepositLimitCents),
+    cofferIofRate: (rules.iofBps / 100).toFixed(2),
+    cofferSimulationDate: rules.simulationDate || ''
+  };
+  for (const [id, value] of Object.entries(values)) {
+    const element = document.getElementById(id);
+    if (element) element.value = value;
+  }
+  const tax = document.getElementById('cofferTaxEnabled');
+  const iof = document.getElementById('cofferIofEnabled');
+  const monthlyGoal = document.getElementById('cofferMonthlyGoalRequired');
+  if (tax) tax.checked = rules.incomeTaxEnabled;
+  if (iof) iof.checked = rules.iofEnabled;
+  if (monthlyGoal) monthlyGoal.checked = rules.commonRequiresMonthlyGoal;
+}
+
+function saveCofferSettings(event) {
+  event.preventDefault();
+  const numeric = (id) => Number(document.getElementById(id)?.value);
+  const money = (id) => toCents(numeric(id));
+  const percentBps = (id) => Math.round(numeric(id) * 100);
+  const rules = {
+    ...state.cofferSettings,
+    annualCdiBps: percentBps('cofferCdiAnnual'),
+    commonBaseBps: percentBps('cofferCommonBase'),
+    commonBonusBps: percentBps('cofferCommonBonus'),
+    commonTierCapCents: money('cofferCommonCap'),
+    turnBonusBps: percentBps('cofferTurnBonus'),
+    turnTierCapCents: money('cofferTurnCap'),
+    turnStartDate: document.getElementById('cofferTurnStart').value,
+    turnEndDate: document.getElementById('cofferTurnEnd').value,
+    marketplaceBonusBps: percentBps('cofferMarketplaceBonus'),
+    marketplacePromoEndDate: document.getElementById('cofferMarketplacePromoEnd').value,
+    marketplaceDepositLimitCents: money('cofferMarketplaceLimit'),
+    iofBps: percentBps('cofferIofRate'),
+    simulationDate: document.getElementById('cofferSimulationDate').value,
+    incomeTaxEnabled: document.getElementById('cofferTaxEnabled').checked,
+    iofEnabled: document.getElementById('cofferIofEnabled').checked,
+    commonRequiresMonthlyGoal: document.getElementById('cofferMonthlyGoalRequired').checked
+  };
+  if (!Object.values({
+    annualCdiBps: rules.annualCdiBps,
+    commonBaseBps: rules.commonBaseBps,
+    commonBonusBps: rules.commonBonusBps,
+    commonTierCapCents: rules.commonTierCapCents,
+    turnBonusBps: rules.turnBonusBps,
+    turnTierCapCents: rules.turnTierCapCents,
+    marketplaceBonusBps: rules.marketplaceBonusBps,
+    marketplaceDepositLimitCents: rules.marketplaceDepositLimitCents,
+    iofBps: rules.iofBps
+  }).every((value) => Number.isSafeInteger(value) && value >= 0)
+    || !validateCofferSettings(rules)) {
+    showToast('Revise os parâmetros: use valores válidos, não negativos e datas válidas.', 'error');
+    return;
+  }
+  state.cofferSettings = rules;
+  saveState();
+  renderCoffers();
+  updateRawEditor();
+  showToast('Parâmetros de simulação atualizados.', 'success');
+}
+
+function cofferSimulationDate() {
+  return state.cofferSettings?.simulationDate || dateKey(new Date());
+}
+
+function renderCoffers() {
+  if (!dom.cofferList) return;
+  const asOfDate = cofferSimulationDate();
+  const isSimulatedDate = asOfDate !== dateKey(new Date());
+  const transitioned = state.coffers.map((coffer) => (
+    resolveCofferTransition(coffer, state.transactions, asOfDate)
+  ));
+  const hasTransition = transitioned.some((coffer, index) => coffer !== state.coffers[index]);
+  const coffers = isSimulatedDate ? transitioned : transitioned;
+  if (hasTransition && !isSimulatedDate) {
+    state.coffers = transitioned;
+    saveState();
+    updateRawEditor();
+  }
+
+  const balances = calculateCofferBalances(coffers, state.transactions);
+  const totalPrincipal = balances.reduce((sum, item) => sum + item.principalCents, 0);
+  const totalYield = balances.reduce((sum, item) => sum + item.yieldCents, 0);
+  if (dom.cofferTotalBalance) dom.cofferTotalBalance.textContent = formatCurrencyFromCents(totalPrincipal + totalYield);
+  if (dom.cofferPrincipalTotal) dom.cofferPrincipalTotal.textContent = formatCurrencyFromCents(totalPrincipal);
+  if (dom.cofferYieldTotal) dom.cofferYieldTotal.textContent = formatCurrencyFromCents(totalYield);
+
+  if (coffers.length === 0) {
+    dom.cofferList.innerHTML = '<div class="empty-state">Nenhum cofrinho cadastrado. Crie um cofrinho ou escolha um modelo.</div>';
+    return;
+  }
+
+  dom.cofferList.innerHTML = coffers.map((coffer) => {
+    const balance = calculateCofferBalance(coffer, state.transactions);
+    const rate = getCofferRateDescription(
+      coffer, coffers, state.cofferSettings, asOfDate, state.transactions
+    );
+    const rateLabel = rate.bonusBps > rate.baseBps
+      ? coffer.type === 'marketplace'
+        ? `${(rate.bonusBps / 100).toFixed(2)}% do CDI até ${sanitizeHtml(state.cofferSettings.marketplacePromoEndDate)}; sem teto promocional de saldo`
+        : coffer.type === 'turn'
+          ? `${(rate.bonusBps / 100).toFixed(2)}% do CDI até ${formatCurrencyFromCents(rate.tierCapCents)}; ${(rate.baseBps / 100).toFixed(0)}% no excedente`
+          : `${(rate.bonusBps / 100).toFixed(2)}% do CDI sobre ${formatCurrencyFromCents(rate.eligibleCents)} na faixa compartilhada; ${(rate.baseBps / 100).toFixed(0)}% no excedente`
+      : `${(rate.baseBps / 100).toFixed(0)}% do CDI`;
+    const goalProgress = coffer.goalCents > 0
+      ? Math.min(100, Math.round(balance.totalCents / coffer.goalCents * 100))
+      : null;
+    const campaignText = coffer.type === 'turn'
+      ? `Campanha: ${sanitizeHtml(coffer.campaignStartDate || state.cofferSettings.turnStartDate)} a ${sanitizeHtml(coffer.campaignEndDate || state.cofferSettings.turnEndDate)}`
+      : coffer.type === 'marketplace'
+        ? `Taxa promocional até ${sanitizeHtml(state.cofferSettings.marketplacePromoEndDate)} · limite ${formatCurrencyFromCents(coffer.depositLimitCents || state.cofferSettings.marketplaceDepositLimitCents)}`
+        : 'Faixa promocional compartilhada entre os cofrinhos comuns.';
+    const escapedId = sanitizeHtml(coffer.id);
+    return `
+      <article class="coffer-card">
+        <div class="coffer-card-header">
+          <div class="coffer-identity">
+            <span class="coffer-icon" aria-hidden="true">${sanitizeHtml(coffer.icon || '💰')}</span>
+            <div><h4>${sanitizeHtml(coffer.name)}</h4><p>${coffer.type === 'common' ? 'Comum' : coffer.type === 'turn' ? 'Da Virada' : 'Mercado Livre'} · ${coffer.active ? 'Ativo' : 'Inativo'}</p></div>
+          </div>
+          <button type="button" class="icon-button" data-action="edit-coffer" data-id="${escapedId}" aria-label="Editar ${sanitizeHtml(coffer.name)}"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        </div>
+        <div class="coffer-balances">
+          <div><span>Principal</span><strong>${formatCurrencyFromCents(balance.principalCents)}</strong></div>
+          <div><span>Rendimento líquido</span><strong>${formatCurrencyFromCents(balance.yieldCents)}</strong></div>
+          <div class="coffer-total"><span>Saldo total</span><strong>${formatCurrencyFromCents(balance.totalCents)}</strong></div>
+        </div>
+        ${goalProgress === null ? '' : `<div class="coffer-goal"><div><span>Meta</span><strong>${goalProgress}%</strong></div><progress max="100" value="${goalProgress}" aria-label="Progresso da meta de ${sanitizeHtml(coffer.name)}">${goalProgress}%</progress></div>`}
+        <p class="coffer-rate">${rateLabel}</p>
+        <p class="coffer-campaign">${campaignText}</p>
+        <p class="coffer-calculation">CDI anual: ${(state.cofferSettings.annualCdiBps / 100).toFixed(2)}% · juros em dias úteis (seg-sex), antes de IR estimado. Feriados não são descontados.</p>
+        <p class="coffer-flags">${coffer.paymentEnabled ? 'Pagamentos habilitados' : 'Pagamentos desabilitados'}${coffer.type === 'marketplace' && coffer.allowWithdrawalWithoutYieldLoss !== true ? ' · resgate comum reduz rendimento proporcionalmente' : ''}</p>
+        ${isSimulatedDate ? `<p class="coffer-simulation-note">Data simulada: ${sanitizeHtml(asOfDate)}. A transição exibida não altera o cadastro até voltar à data real.</p>` : ''}
+        <div class="coffer-actions">
+          <button type="button" class="secondary-button" data-action="coffer-deposit" data-id="${escapedId}">Aportar</button>
+          <button type="button" class="secondary-button" data-action="coffer-withdrawal" data-id="${escapedId}">Resgatar</button>
+          ${coffer.type === 'marketplace' ? `<button type="button" class="secondary-button" data-action="coffer-purchase" data-id="${escapedId}">Compra ML</button>` : ''}
+          <button type="button" class="secondary-button" data-action="coffer-yield" data-id="${escapedId}">Crédito manual</button>
+          <button type="button" class="secondary-button" data-action="simulate-coffer-yield" data-id="${escapedId}">Simular rendimento</button>
+          <button type="button" class="danger-button" data-action="delete-coffer" data-id="${escapedId}" aria-label="Excluir ou arquivar ${sanitizeHtml(coffer.name)}">Excluir</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+  rebuildCofferSelect();
+}
+
+function refreshCreditInvoice(invoice) {
+  const installments = state.creditInstallments.filter((item) => item.invoiceId === invoice.id);
+  invoice.installmentIds = installments.map((item) => item.id);
+  invoice.totalCents = installments.reduce((sum, item) => sum + item.amountCents, 0);
+  invoice.paidCents = installments.reduce((sum, item) => sum + item.paidCents, 0);
+  invoice.status = summarizeCreditInvoice(invoice, state.creditInstallments, dateKey(new Date())).status;
+  invoice.updatedAt = new Date().toISOString();
+  invoice.version = (invoice.version || 1) + 1;
+  return invoice;
+}
+
+function findOrCreateCreditInvoice(card, invoiceMonth) {
+  let invoice = state.creditInvoices.find((item) => (
+    item.cardId === card.id && item.invoiceMonth === invoiceMonth
+  ));
+  if (invoice) return invoice;
+  const dates = getCreditInvoiceDates(invoiceMonth, card.closingDay, card.dueDay);
+  const timestamp = new Date().toISOString();
+  invoice = {
+    id: createId(),
+    cardId: card.id,
+    invoiceMonth,
+    ...dates,
+    installmentIds: [],
+    totalCents: 0,
+    paidCents: 0,
+    status: dateKey(new Date()) > dates.closingDate ? 'closed' : 'open',
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: 1
+  };
+  state.creditInvoices.push(invoice);
+  return invoice;
+}
+
+function getCreditInvoiceSummary(invoice) {
+  return summarizeCreditInvoice(invoice, state.creditInstallments, dateKey(new Date()));
+}
+
+function renderCreditCards() {
+  if (!dom.creditCardList) return;
+  const cards = state.creditCards || [];
+  rebuildCreditCardOptions();
+  const usages = cards.map((card) => ({
+    card,
+    ...calculateCreditCardUsage(card, state.creditInstallments || [])
+  }));
+  const totalLimitCents = usages.reduce((sum, item) => sum + item.limitCents, 0);
+  const totalUsedCents = usages.reduce((sum, item) => sum + item.usedCents, 0);
+  if (dom.creditTotalLimit) dom.creditTotalLimit.textContent = formatCurrencyFromCents(totalLimitCents);
+  if (dom.creditUsedLimit) dom.creditUsedLimit.textContent = formatCurrencyFromCents(totalUsedCents);
+  if (dom.creditAvailableLimit) dom.creditAvailableLimit.textContent = formatCurrencyFromCents(totalLimitCents - totalUsedCents);
+
+  const summaries = (state.creditInvoices || []).map((invoice) => getCreditInvoiceSummary(invoice));
+  const unpaidTotalCents = summaries.reduce((sum, invoice) => sum + invoice.remainingCents, 0);
+  if (dom.creditOpenInvoices) dom.creditOpenInvoices.textContent = formatCurrencyFromCents(unpaidTotalCents);
+
+  if (cards.length === 0) {
+    dom.creditCardList.innerHTML = '<div class="empty-state">Nenhum cartão cadastrado. Cadastre um cartão para organizar limites e faturas.</div>';
+  } else {
+    dom.creditCardList.innerHTML = usages.map(({ card, usedCents, availableCents, limitCents }) => {
+      const ratio = limitCents > 0 ? Math.min(100, Math.max(0, Math.round(usedCents / limitCents * 100))) : 0;
+      const cardInvoices = summaries.filter((invoice) => invoice.cardId === card.id && invoice.remainingCents > 0)
+        .sort((left, right) => left.invoiceMonth.localeCompare(right.invoiceMonth));
+      const nextInvoice = cardInvoices[0];
+      const escapedId = sanitizeHtml(card.id);
+      return `<article class="credit-card-item" style="--credit-card-color:${sanitizeHtml(card.color)}">
+        <div class="credit-card-item-header">
+          <span class="credit-card-mark" aria-hidden="true">${sanitizeHtml(card.icon || '💳')}</span>
+          <div class="credit-card-title"><h4>${sanitizeHtml(card.name)}</h4><span>${card.active ? 'Ativo' : 'Inativo'}</span></div>
+          <button type="button" class="icon-button" data-action="edit-credit-card" data-id="${escapedId}" aria-label="Editar ${sanitizeHtml(card.name)}"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+        </div>
+        <div class="credit-limit-values"><span>Utilizado <strong>${formatCurrencyFromCents(usedCents)}</strong></span><span>Disponível <strong>${formatCurrencyFromCents(availableCents)}</strong></span></div>
+        <progress max="100" value="${ratio}" aria-label="${ratio}% do limite utilizado">${ratio}%</progress>
+        <p>Limite total: ${formatCurrencyFromCents(limitCents)} · fecha dia ${card.closingDay} · vence dia ${card.dueDay}</p>
+        <p>${nextInvoice ? `Próxima fatura: ${formatCurrencyFromCents(nextInvoice.remainingCents)} · vence ${sanitizeHtml(nextInvoice.dueDate)}` : 'Sem faturas pendentes.'}</p>
+      </article>`;
+    }).join('');
+  }
+
+  const sortedInvoices = summaries.sort((left, right) => (
+    left.dueDate.localeCompare(right.dueDate)
+      || left.cardId.localeCompare(right.cardId)
+  ));
+  if (sortedInvoices.length === 0) {
+    dom.creditInvoiceList.innerHTML = '<div class="empty-state">As faturas e parcelas futuras aparecerão aqui após a primeira compra no cartão.</div>';
+    return;
+  }
+  dom.creditInvoiceList.innerHTML = sortedInvoices.map((invoice) => {
+    const card = cards.find((item) => item.id === invoice.cardId);
+    const items = state.creditInstallments.filter((item) => item.invoiceId === invoice.id);
+    const statusLabel = invoice.status === 'paid' ? 'Paga' : invoice.status === 'closed' ? 'Fechada' : 'Aberta';
+    const lines = items.map((item) => {
+      const purchase = state.transactions.find((transaction) => transaction.id === item.purchaseId);
+      return `<li><span>${sanitizeHtml(purchase?.description || 'Compra removida')} · ${item.installmentNumber}/${item.installmentCount}</span><strong>${formatCurrencyFromCents(item.amountCents - item.paidCents)}</strong></li>`;
+    }).join('');
+    return `<article class="credit-invoice-item">
+      <header><div><h4>${sanitizeHtml(card?.name || 'Cartão removido')} · ${sanitizeHtml(invoice.invoiceMonth)}</h4><p>Fechamento ${sanitizeHtml(invoice.closingDate)} · vencimento ${sanitizeHtml(invoice.dueDate)}</p></div><span class="invoice-status invoice-status--${invoice.status}">${statusLabel}</span></header>
+      <ul>${lines}</ul>
+      <div class="credit-invoice-total"><span>${invoice.paidCents ? `Pago ${formatCurrencyFromCents(invoice.paidCents)} · saldo restante` : 'Total da fatura'}</span><strong>${formatCurrencyFromCents(invoice.remainingCents)}</strong></div>
+      ${invoice.remainingCents > 0 ? `<button type="button" class="primary-button" data-action="pay-credit-invoice" data-id="${sanitizeHtml(invoice.id)}">Pagar fatura</button>` : ''}
+    </article>`;
+  }).join('');
+}
+
+function rebuildCreditCardOptions(select = dom.transactionCreditCard, selectedId = '', activeOnly = true) {
+  if (!select) return;
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Selecione um cartão';
+  const options = [placeholder];
+  state.creditCards
+    .filter((card) => !activeOnly || card.active)
+    .forEach((card) => {
+      const option = document.createElement('option');
+      option.value = card.id;
+      option.textContent = `${card.icon || '💳'} ${card.name}`;
+      options.push(option);
+    });
+  select.replaceChildren(...options);
+  if (state.creditCards.some((card) => card.id === selectedId)) select.value = selectedId;
+}
+
+function updateCreditPurchaseFields() {
+  const method = dom.transactionPaymentMethod;
+  const operation = dom.transactionCofferOperation?.value || '';
+  const typeSelect = document.getElementById('transactionType');
+  const statusSelect = document.getElementById('transactionStatus');
+  if (!method || !typeSelect || !dom.creditPurchaseFields) return;
+  if (operation && method.value === 'creditCard') method.value = 'account';
+  const isCreditPurchase = !operation && method.value === 'creditCard';
+  dom.creditPurchaseFields.hidden = !isCreditPurchase;
+  method.disabled = Boolean(operation);
+  if (dom.transactionPayment) {
+    const paymentLabel = dom.transactionPayment.closest('label');
+    if (paymentLabel) paymentLabel.hidden = isCreditPurchase;
+  }
+  if (isCreditPurchase) {
+    typeSelect.value = 'expense';
+    typeSelect.disabled = true;
+    if (statusSelect) {
+      if (!statusSelect.dataset.creditForced) statusSelect.dataset.previousValue = statusSelect.value;
+      statusSelect.dataset.creditForced = 'true';
+      statusSelect.value = 'pending';
+      statusSelect.disabled = true;
+    }
+    rebuildTransactionCategoryOptions('expense');
+  } else {
+    typeSelect.disabled = Boolean(operation);
+    if (statusSelect?.dataset.creditForced) {
+      statusSelect.disabled = false;
+      statusSelect.value = statusSelect.dataset.previousValue || 'paid';
+      delete statusSelect.dataset.creditForced;
+      delete statusSelect.dataset.previousValue;
+    }
+  }
+  if (dom.transactionCreditCard) {
+    dom.transactionCreditCard.required = isCreditPurchase;
+    if (isCreditPurchase) rebuildCreditCardOptions(dom.transactionCreditCard, dom.transactionCreditCard.value);
+  }
+  if (dom.transactionInstallments) dom.transactionInstallments.required = isCreditPurchase;
+}
+
+function openCreditCardModal(card = null) {
+  const modal = document.getElementById('creditCardModal');
+  if (!modal) return;
+  activateModal(modal);
+  document.getElementById('creditCardModalTitle').textContent = card ? 'Editar cartão' : 'Novo cartão';
+  document.getElementById('creditCardName').value = card?.name || '';
+  document.getElementById('creditCardIcon').value = card?.icon || '💳';
+  document.getElementById('creditCardColor').value = card?.color || '#2563eb';
+  document.getElementById('creditCardLimit').value = card
+    ? (convertBaseCentsToInputValue(card.limitCents) ?? fromCents(card.limitCents))
+    : '';
+  document.getElementById('creditCardClosingDay').value = card?.closingDay || 25;
+  document.getElementById('creditCardDueDay').value = card?.dueDay || 10;
+  document.getElementById('creditCardActive').checked = card?.active !== false;
+  modal.dataset.editId = card?.id || '';
+}
+
+function handleCreditCardSubmit(event) {
+  event.preventDefault();
+  const modal = document.getElementById('creditCardModal');
+  const id = modal.dataset.editId;
+  const existing = id ? state.creditCards.find((item) => item.id === id) : null;
+  const name = document.getElementById('creditCardName').value.trim();
+  const icon = document.getElementById('creditCardIcon').value.trim() || '💳';
+  const color = document.getElementById('creditCardColor').value;
+  const limitInput = Number(document.getElementById('creditCardLimit').value);
+  const limitCents = convertInputAmountToBaseCents(limitInput);
+  const closingDay = Number(document.getElementById('creditCardClosingDay').value);
+  const dueDay = Number(document.getElementById('creditCardDueDay').value);
+  if (!name || name.length > 60 || Array.from(icon).length > 8 || /[<>]/.test(icon)
+    || !/^#[0-9a-f]{6}$/i.test(color)
+    || !Number.isSafeInteger(limitCents) || limitCents <= 0
+    || !Number.isInteger(closingDay) || closingDay < 1 || closingDay > 31
+    || !Number.isInteger(dueDay) || dueDay < 1 || dueDay > 31) {
+    showToast('Revise nome, limite, fechamento e vencimento do cartão.', 'error');
+    return;
+  }
+  const usage = calculateCreditCardUsage(existing || { id, limitCents }, state.creditInstallments);
+  if (limitCents < usage.usedCents) {
+    showToast('O novo limite não pode ser menor que o valor comprometido em parcelas.', 'error');
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  const card = {
+    ...(existing || {}),
+    id: existing?.id || createId(),
+    name,
+    icon,
+    color,
+    limitCents,
+    closingDay,
+    dueDay,
+    active: document.getElementById('creditCardActive').checked,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
+  if (existing) state.creditCards[state.creditCards.findIndex((item) => item.id === id)] = card;
+  else state.creditCards.push(card);
+  saveState();
+  closeModals();
+  renderCreditCards();
+  updateRawEditor();
+  showToast(existing ? 'Cartão atualizado.' : 'Cartão cadastrado.', 'success');
+}
+
+function removeUnpaidCreditPurchaseInstallments(purchaseId) {
+  const installments = state.creditInstallments.filter((item) => item.purchaseId === purchaseId);
+  if (installments.some((item) => item.paidCents > 0)) return false;
+  const invoiceIds = new Set(installments.map((item) => item.invoiceId));
+  state.creditInstallments = state.creditInstallments.filter((item) => item.purchaseId !== purchaseId);
+  for (const invoiceId of invoiceIds) {
+    const invoice = state.creditInvoices.find((item) => item.id === invoiceId);
+    if (!invoice) continue;
+    if (!state.creditInstallments.some((item) => item.invoiceId === invoiceId)) {
+      state.creditInvoices = state.creditInvoices.filter((item) => item.id !== invoiceId);
+    } else refreshCreditInvoice(invoice);
+  }
+  return true;
+}
+
+function addCreditPurchaseInstallments(card, purchaseId, purchaseDate, amountCents, installmentCount) {
+  const generated = buildCreditInstallmentSchedule({
+    card,
+    purchaseId,
+    purchaseDate,
+    amountCents,
+    installmentCount,
+    createId: () => createId()
+  });
+  const invoiceByMonth = new Map();
+  for (const installment of generated) {
+    if (invoiceByMonth.has(installment.invoiceMonth)) continue;
+    invoiceByMonth.set(
+      installment.invoiceMonth,
+      findOrCreateCreditInvoice(card, installment.invoiceMonth)
+    );
+  }
+  const installments = generated.map((item) => ({
+    ...item,
+    invoiceId: invoiceByMonth.get(item.invoiceMonth).id
+  }));
+  state.creditInstallments.push(...installments);
+  for (const invoice of invoiceByMonth.values()) refreshCreditInvoice(invoice);
+}
+
+function openCreditInvoicePayment(invoiceId) {
+  const invoice = state.creditInvoices.find((item) => item.id === invoiceId);
+  if (!invoice) return;
+  const summary = getCreditInvoiceSummary(invoice);
+  if (summary.remainingCents <= 0) return;
+  const card = state.creditCards.find((item) => item.id === invoice.cardId);
+  document.getElementById('creditInvoicePaymentTitle').textContent = 'Pagar fatura';
+  document.getElementById('creditInvoicePaymentSummary').textContent = `${card?.name || 'Cartão'} · ${invoice.invoiceMonth} · saldo ${formatCurrencyFromCents(summary.remainingCents)} · vence ${invoice.dueDate}`;
+  document.getElementById('creditInvoicePaymentAmount').value =
+    convertBaseCentsToInputValue(summary.remainingCents, invoice.dueDate) ?? fromCents(summary.remainingCents);
+  const source = dom.creditInvoicePaymentSource;
+  source.value = 'account';
+  const cofferSelect = dom.creditInvoicePaymentCoffer;
+  const cofferPlaceholder = document.createElement('option');
+  cofferPlaceholder.value = '';
+  cofferPlaceholder.textContent = 'Selecione um cofrinho';
+  const cofferOptions = [cofferPlaceholder];
+  state.coffers.filter((coffer) => coffer.active && coffer.paymentEnabled).forEach((coffer) => {
+    const option = document.createElement('option');
+    option.value = coffer.id;
+    option.textContent = `${coffer.icon || '💰'} ${coffer.name}`;
+    cofferOptions.push(option);
+  });
+  cofferSelect.replaceChildren(...cofferOptions);
+  source.querySelector('option[value="coffer"]').disabled = cofferOptions.length === 1;
+  document.getElementById('creditInvoicePaymentModal').dataset.invoiceId = invoice.id;
+  updateCreditInvoicePaymentSource();
+  activateModal(document.getElementById('creditInvoicePaymentModal'));
+}
+
+function updateCreditInvoicePaymentSource() {
+  const useCoffer = dom.creditInvoicePaymentSource?.value === 'coffer';
+  const field = document.getElementById('creditInvoicePaymentCofferField');
+  if (field) field.hidden = !useCoffer;
+  if (dom.creditInvoicePaymentCoffer) dom.creditInvoicePaymentCoffer.required = useCoffer;
+}
+
+function handleCreditInvoicePaymentSubmit(event) {
+  event.preventDefault();
+  const modal = document.getElementById('creditInvoicePaymentModal');
+  const invoice = state.creditInvoices.find((item) => item.id === modal.dataset.invoiceId);
+  if (!invoice) {
+    showToast('Fatura não encontrada.', 'error');
+    return;
+  }
+  const summary = getCreditInvoiceSummary(invoice);
+  const enteredAmount = Number(document.getElementById('creditInvoicePaymentAmount').value);
+  const amountCents = convertInputAmountToBaseCents(enteredAmount, dateKey(new Date()));
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > summary.remainingCents) {
+    showToast(`Informe um pagamento entre R$ 0,01 e ${formatCurrencyFromCents(summary.remainingCents)}.`, 'error');
+    return;
+  }
+  const source = dom.creditInvoicePaymentSource.value;
+  if (source === 'account' && calculateCurrentBalance() < amountCents) {
+    showToast('Saldo realizado insuficiente para este pagamento. Escolha um valor parcial ou outra origem.', 'error');
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  const paymentId = createId();
+  let payment;
+  if (source === 'coffer') {
+    const coffer = state.coffers.find((item) => item.id === dom.creditInvoicePaymentCoffer.value);
+    if (!coffer || !coffer.active || !coffer.paymentEnabled) {
+      showToast('Selecione um cofrinho ativo e habilitado para pagamentos.', 'error');
+      return;
+    }
+    try {
+      payment = createCofferOperation({
+        coffer,
+        coffers: state.coffers,
+        transactions: state.transactions,
+        operation: 'withdrawal',
+        amountCents,
+        date: dateKey(new Date()),
+        status: 'paid',
+        id: paymentId,
+        description: `Pagamento fatura ${invoice.invoiceMonth}`,
+        settings: state.cofferSettings
+      });
+    } catch (error) {
+      showToast(`Pagamento não registrado: ${error.message}`, 'error');
+      return;
+    }
+    payment.accountImpactCents = 0;
+    payment.affectsAccountBalance = false;
+    payment.sourceType = 'creditInvoicePayment';
+    payment.creditInvoiceId = invoice.id;
+    payment.creditCardId = invoice.cardId;
+    payment.paymentSource = 'coffer';
+    payment.updatedAt = timestamp;
+  } else {
+    payment = {
+      id: paymentId,
+      date: dateKey(new Date()),
+      type: 'transfer',
+      status: 'paid',
+      valueCents: amountCents,
+      value: fromCents(amountCents),
+      category: '',
+      description: `Pagamento fatura ${invoice.invoiceMonth}`,
+      payment: 'Saldo da conta',
+      sourceType: 'creditInvoicePayment',
+      creditInvoiceId: invoice.id,
+      creditCardId: invoice.cardId,
+      paymentSource: 'account',
+      accountImpactCents: -amountCents,
+      affectsAccountBalance: true,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      deletedAt: null,
+      version: 1
+    };
+  }
+
+  state.creditInstallments = applyInvoicePayment(state.creditInstallments, invoice.id, amountCents);
+  refreshCreditInvoice(invoice);
+  state.transactions.push(payment);
+  saveState();
+  closeModals();
+  renderAllUI();
+  showToast(`Pagamento de ${formatCurrencyFromCents(amountCents)} registrado.`, 'success');
+}
+
+function updateCofferTypeFields() {
+  const type = document.getElementById('cofferType')?.value;
+  const limitField = document.getElementById('cofferDepositLimitField');
+  if (limitField) limitField.hidden = type !== 'marketplace';
+}
+
+function openCofferModal(coffer = null, template = null) {
+  const defaults = {
+    dindin: { name: 'Dindin', type: 'common', icon: '💰', paymentEnabled: true },
+    moto: { name: 'Moto', type: 'common', icon: '🏍️', paymentEnabled: true },
+    turn: { name: 'Cofrinho da Virada', type: 'turn', icon: '🎆', paymentEnabled: false },
+    marketplace: { name: 'Cofrinho Mercado Livre', type: 'marketplace', icon: '🛍️', paymentEnabled: false }
+  };
+  const preset = template ? defaults[template] : null;
+  if (template === 'marketplace' && state.coffers.some((item) => item.type === 'marketplace')) {
+    showToast('Já existe um Cofrinho Mercado Livre cadastrado.', 'warning');
+    return;
+  }
+  openModal('cofferModal', 'cofferModalTitle', coffer ? 'Editar cofrinho' : 'Novo cofrinho');
+  const source = coffer || preset || {};
+  setFormValues({
+    cofferName: source.name || '',
+    cofferType: source.type || 'common',
+    cofferIcon: source.icon || '💰',
+    cofferGoal: coffer ? fromCents(coffer.goalCents) : '',
+    cofferMonthlyGoal: coffer ? fromCents(coffer.monthlyDepositGoalCents) : '',
+    cofferAutomaticDeposit: coffer?.automaticDepositCents ? fromCents(coffer.automaticDepositCents) : '',
+    cofferTermMonths: coffer?.termMonths || '',
+    cofferDepositLimit: coffer?.depositLimitCents
+      ? fromCents(coffer.depositLimitCents)
+      : fromCents(state.cofferSettings.marketplaceDepositLimitCents),
+    cofferInitialPrincipal: 0,
+    cofferInitialYield: 0,
+    cofferActive: coffer ? String(coffer.active) : 'true',
+    cofferPaymentEnabled: coffer ? coffer.paymentEnabled : Boolean(preset?.paymentEnabled),
+    cofferAllowWithdrawalWithoutYieldLoss: coffer
+      ? coffer.allowWithdrawalWithoutYieldLoss === true
+      : source.type !== 'marketplace'
+  });
+  const modal = document.getElementById('cofferModal');
+  modal.dataset.editId = coffer?.id || '';
+  const isDuringCampaign = coffer?.type === 'turn'
+    && cofferSimulationDate() >= (coffer.campaignStartDate || state.cofferSettings.turnStartDate)
+    && cofferSimulationDate() <= (coffer.campaignEndDate || state.cofferSettings.turnEndDate);
+  const lockedIds = ['cofferName', 'cofferIcon', 'cofferGoal', 'cofferMonthlyGoal', 'cofferAutomaticDeposit', 'cofferTermMonths', 'cofferType'];
+  for (const id of lockedIds) {
+    const element = document.getElementById(id);
+    if (element) element.disabled = isDuringCampaign;
+  }
+  const initialPrincipal = document.getElementById('cofferInitialPrincipal');
+  const initialYield = document.getElementById('cofferInitialYield');
+  if (initialPrincipal) initialPrincipal.disabled = Boolean(coffer);
+  if (initialYield) initialYield.disabled = Boolean(coffer);
+  const notice = document.getElementById('cofferCampaignNotice');
+  if (notice) {
+    notice.textContent = isDuringCampaign
+      ? 'Durante a campanha, nome, ícone, metas, prazo e depósito automático ficam bloqueados.'
+      : 'Saldos iniciais são registros de abertura; aportes posteriores devem ser lançados para manter o histórico.';
+  }
+  updateCofferTypeFields();
+}
+
+function handleCofferSubmit(event) {
+  event.preventDefault();
+  const modal = document.getElementById('cofferModal');
+  const id = modal.dataset.editId;
+  const existing = id ? state.coffers.find((item) => item.id === id) : null;
+  const value = (field) => Number(document.getElementById(field).value || 0);
+  const asCents = (field) => toCents(value(field));
+  const type = existing?.type && document.getElementById('cofferType').disabled
+    ? existing.type
+    : document.getElementById('cofferType').value;
+  const campaignStart = existing?.campaignStartDate || state.cofferSettings.turnStartDate;
+  const campaignEnd = existing?.campaignEndDate || state.cofferSettings.turnEndDate;
+  const isDuringCampaign = existing?.type === 'turn'
+    && cofferSimulationDate() >= campaignStart && cofferSimulationDate() <= campaignEnd;
+  const name = isDuringCampaign ? existing.name : document.getElementById('cofferName').value.trim();
+  const icon = isDuringCampaign ? existing.icon : document.getElementById('cofferIcon').value.trim();
+  if (!name || name.length > 60 || !icon || Array.from(icon).length > 8 || /[<>]/.test(icon)) {
+    showToast('Informe um nome e um ícone válidos.', 'error');
+    return;
+  }
+  if (!['common', 'turn', 'marketplace'].includes(type)) {
+    showToast('Tipo de cofrinho inválido.', 'error');
+    return;
+  }
+  if (state.coffers.some((item) => item.type === 'marketplace' && item.id !== id) && type === 'marketplace') {
+    showToast('Só é permitido um Cofrinho Mercado Livre.', 'error');
+    return;
+  }
+  const monetaryFields = ['cofferGoal', 'cofferMonthlyGoal', 'cofferAutomaticDeposit', 'cofferDepositLimit', 'cofferInitialPrincipal', 'cofferInitialYield'];
+  if (monetaryFields.some((field) => !Number.isFinite(value(field)) || value(field) < 0)) {
+    showToast('Valores monetários devem ser números não negativos.', 'error');
+    return;
+  }
+  const timestamp = new Date().toISOString();
+  const coffer = {
+    ...(existing || {}),
+    id: existing?.id || createId(),
+    name,
+    icon,
+    type,
+    active: document.getElementById('cofferActive').value === 'true',
+    paymentEnabled: document.getElementById('cofferPaymentEnabled').checked,
+    allowWithdrawalWithoutYieldLoss: document.getElementById('cofferAllowWithdrawalWithoutYieldLoss').checked,
+    goalCents: isDuringCampaign ? existing.goalCents : asCents('cofferGoal'),
+    monthlyDepositGoalCents: isDuringCampaign ? existing.monthlyDepositGoalCents : asCents('cofferMonthlyGoal'),
+    automaticDepositCents: isDuringCampaign ? existing.automaticDepositCents || 0 : asCents('cofferAutomaticDeposit'),
+    termMonths: isDuringCampaign ? existing.termMonths || null : (value('cofferTermMonths') || null),
+    depositLimitCents: type === 'marketplace'
+      ? (asCents('cofferDepositLimit') || state.cofferSettings.marketplaceDepositLimitCents)
+      : null,
+    campaignStartDate: type === 'turn' ? campaignStart : null,
+    campaignEndDate: type === 'turn' ? campaignEnd : null,
+    principalCents: existing?.principalCents || 0,
+    yieldCents: existing?.yieldCents || 0,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
+
+  const initialPrincipalCents = existing ? 0 : asCents('cofferInitialPrincipal');
+  const initialYieldCents = existing ? 0 : asCents('cofferInitialYield');
+  const previousCoffers = state.coffers.slice();
+  const previousTransactions = state.transactions.slice();
+  if (!existing) state.coffers.push(coffer);
+  else state.coffers[state.coffers.findIndex((item) => item.id === id)] = coffer;
+  try {
+    if (initialPrincipalCents > 0) {
+      state.transactions.push(createCofferOperation({
+        coffer: { ...coffer, active: true },
+        coffers: state.coffers,
+        transactions: state.transactions,
+        operation: 'opening',
+        amountCents: initialPrincipalCents,
+        date: dateKey(new Date()),
+        id: createId(),
+        description: `Saldo inicial — ${name}`,
+        settings: state.cofferSettings
+      }));
+    }
+    if (initialYieldCents > 0) {
+      const incomeCategory = state.categories.find((item) => item.type === 'income' || item.type === 'both');
+      if (!incomeCategory) throw new Error('Cadastre uma categoria de receita antes de registrar rendimento inicial.');
+      state.transactions.push(createCofferOperation({
+        coffer: { ...coffer, active: true },
+        coffers: state.coffers,
+        transactions: state.transactions,
+        operation: 'yield',
+        amountCents: initialYieldCents,
+        date: dateKey(new Date()),
+        id: createId(),
+        description: `Rendimento inicial — ${name}`,
+        category: incomeCategory.id,
+        settings: state.cofferSettings
+      }));
+    }
+  } catch (error) {
+    state.coffers = previousCoffers;
+    state.transactions = previousTransactions;
+    showToast(`Cofrinho não salvo: ${error.message}`, 'error');
+    return;
+  }
+
+  saveState();
+  closeModals();
+  renderAllUI({ coffers: true, transactions: true, dashboard: true, reports: true, editor: true });
+  showToast(existing ? 'Cofrinho atualizado.' : 'Cofrinho criado.', 'success');
+}
+
+function createCofferTemplate(event) {
+  const button = event.target.closest('[data-coffer-template]');
+  if (!button) return;
+  openCofferModal(null, button.dataset.cofferTemplate);
+}
+
+function simulateAndRecordCofferYield(cofferId) {
+  const coffer = state.coffers.find((item) => item.id === cofferId);
+  if (!coffer || !coffer.active) {
+    showToast('Cofrinho inexistente ou inativo.', 'error');
+    return;
+  }
+  const endDate = cofferSimulationDate();
+  const lastYield = state.transactions
+    .filter((item) => item.cofferId === coffer.id && item.cofferOperation === 'yield')
+    .map((item) => item.date)
+    .sort()
+    .pop();
+  const firstOperation = state.transactions
+    .filter((item) => item.cofferId === coffer.id)
+    .map((item) => item.date)
+    .sort()[0];
+  const startDate = lastYield || firstOperation || coffer.createdAt.slice(0, 10);
+  if (startDate >= endDate) {
+    showToast('O período precisa terminar depois do último crédito ou aporte.', 'warning');
+    return;
+  }
+  const result = simulateCofferYield({
+    coffer,
+    coffers: state.coffers,
+    transactions: state.transactions,
+    settings: state.cofferSettings,
+    startDate,
+    endDate
+  });
+  if (result.netInterestCents <= 0) {
+    showToast(`Rendimento líquido calculado: ${formatCurrencyFromCents(result.netInterestCents)} em ${result.businessDays} dias úteis.`, 'info');
+    return;
+  }
+  if (endDate > dateKey(new Date())) {
+    showToast(`Prévia de ${result.businessDays} dias úteis: ${formatCurrencyFromCents(result.netInterestCents)} líquidos. Datas futuras não são lançadas como realizadas.`, 'info');
+    return;
+  }
+  const category = state.categories.find((item) => item.id === 'investimentos')
+    || state.categories.find((item) => item.type === 'income' || item.type === 'both');
+  if (!category) {
+    showToast('Cadastre uma categoria de receita para registrar o rendimento.', 'error');
+    return;
+  }
+  const transaction = createCofferOperation({
+    coffer,
+    coffers: state.coffers,
+    transactions: state.transactions,
+    operation: 'yield',
+    amountCents: result.netInterestCents,
+    date: endDate,
+    id: createId(),
+    description: `Rendimento simulado — ${result.businessDays} dias úteis`,
+    category: category.id,
+    settings: state.cofferSettings
+  });
+  transaction.cofferSimulation = result;
+  state.transactions.push(transaction);
+  saveState();
+  renderAllUI({ coffers: true, transactions: true, dashboard: true, reports: true, editor: true });
+  showToast(`Rendimento líquido de ${formatCurrencyFromCents(result.netInterestCents)} registrado (${result.businessDays} dias úteis).`, 'success');
+}
+
+function deleteCoffer(cofferId) {
+  const coffer = state.coffers.find((item) => item.id === cofferId);
+  if (!coffer) return;
+  const hasLedger = state.transactions.some((item) => item.cofferId === cofferId);
+  showDangerConfirmModal(
+    hasLedger ? 'Arquivar cofrinho' : 'Excluir cofrinho',
+    hasLedger
+      ? 'Este cofrinho possui lançamentos vinculados. Ele será desativado para preservar o histórico.'
+      : 'Este cofrinho será movido para a lixeira.',
+    hasLedger ? 'ARQUIVAR' : 'EXCLUIR',
+    () => {
+      if (hasLedger) {
+        coffer.active = false;
+        coffer.updatedAt = new Date().toISOString();
+        coffer.version = (coffer.version || 1) + 1;
+      } else {
+        trashBin.moveToTrash('coffer', coffer);
+        state.coffers = state.coffers.filter((item) => item.id !== cofferId);
+      }
+      saveState();
+      renderAllUI({ coffers: true, transactions: true, dashboard: true, reports: true, editor: true, trash: true });
+      showToast(hasLedger ? 'Cofrinho arquivado; histórico preservado.' : 'Cofrinho movido para a lixeira.', 'success');
+    }
+  );
 }
 
 function renderReportPage() {
-  const year = dom.reportYear.value === 'all' ? new Date().getFullYear() : Number(dom.reportYear.value);
+  const year = dom.reportYear.value === 'all' ? null : Number(dom.reportYear.value);
+  const hasTransactions = state.transactions.length > 0;
+  dom.reportsEmptyState.hidden = hasTransactions;
+  dom.analysisChapterTabs.hidden = !hasTransactions;
+  if (!hasTransactions) selectChapterTab('analysis', 'summary');
   state.reportYear = dom.reportYear.value; // Save the actual selected value
   renderAnnualCategoryReport(year);
   renderMonthlyComparison(year);
@@ -2719,10 +3675,12 @@ function renderReportPage() {
   renderTopExpenses(year);
   renderTopIncomeMonth(year);
   renderHeatmap(year);
-  renderProjections(year);
+  renderReportSummary(year);
+  renderProjections(year || new Date().getFullYear());
   renderProjectionDashboard();
   renderPurchaseProjection();
   renderBalanceProjection();
+  renderLongTermProjection();
   // Novas funcionalidades
   renderSavingsGoalProgress();
   renderRiskAnalysis();
@@ -2730,6 +3688,26 @@ function renderReportPage() {
   renderSavedScenarios();
   checkSmartAlerts();
   saveState();
+}
+
+function renderReportSummary(year) {
+  if (!dom.reportSummary) return;
+  const realized = calculatePeriodTotals(state.transactions, year, null);
+  const unsettled = calculateUnsettledPeriodTotals(state.transactions, year, null);
+  const pendingNet = unsettled.pendingIncomeCents - unsettled.pendingExpenseCents;
+  const scheduledNet = unsettled.scheduledIncomeCents - unsettled.scheduledExpenseCents;
+  const realizedNet = realized.incomeCents - realized.expenseCents;
+  const savingsRate = calculateSavingsRate(realized.incomeCents, realized.expenseCents);
+  dom.reportSummary.innerHTML = `
+    <dl class="report-summary-grid">
+      <div><dt>Entradas realizadas</dt><dd>${formatCurrencyFromCents(realized.incomeCents)}</dd></div>
+      <div><dt>Saídas realizadas</dt><dd>${formatCurrencyFromCents(realized.expenseCents)}</dd></div>
+      <div><dt>Resultado realizado</dt><dd>${formatCurrencyFromCents(realizedNet)}</dd></div>
+      <div><dt>Contas pendentes (líquido)</dt><dd>${formatCurrencyFromCents(pendingNet)}</dd></div>
+      <div><dt>Agendado (líquido)</dt><dd>${formatCurrencyFromCents(scheduledNet)}</dd></div>
+      <div><dt>Taxa de economia</dt><dd>${savingsRate === null ? 'Não aplicável' : `${savingsRate.toFixed(1).replace('.', ',')}%`}</dd></div>
+    </dl>
+  `;
 }
 
 function renderHelpPage() {
@@ -2784,12 +3762,11 @@ function renderProjections(year) {
   const totalExpense = forecast.reduce((sum, item) => sum + item.projectedExpense, 0);
   const totalBalance = forecast.reduce((sum, item) => sum + item.projectedBalance, 0);
   const avgMonthlyNet = totalBalance / forecast.length;
-  const savingsRate = totalIncome > 0 ? ((totalBalance / totalIncome) * 100) : 0;
+  const savingsRate = totalIncome > 0 ? ((totalBalance / totalIncome) * 100) : null;
   
   // Análise de tendência ao longo dos meses
   let negativeMonths = 0;
-  let cumulativeBalance = forecast.length > 0 ? forecast[0].projectedBalance : 0;
-  forecast.forEach((item, index) => {
+  forecast.forEach((item) => {
     if (item.projectedBalance < 0) negativeMonths++;
   });
 
@@ -2811,7 +3788,7 @@ function renderProjections(year) {
       <div style="background: ${summaryColor}; border-left: 4px solid ${summaryBorderColor}; padding: 1rem; border-radius: 8px;">
         <div style="color: #94a3b8; font-size: 0.9rem;">Saldo Projetado Total</div>
         <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.5rem; color: ${summaryBorderColor};">${formatCurrency(totalBalance)}</div>
-        <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">Taxa de economia: ${savingsRate.toFixed(1)}%</div>
+        <div style="margin-top: 0.5rem; color: #94a3b8; font-size: 0.85rem;">Taxa de economia: ${savingsRate === null ? 'Não aplicável' : `${savingsRate.toFixed(1)}%`}</div>
       </div>
     </div>
     <div style="margin-top: 1rem; padding: 1rem; background: rgba(100, 116, 139, 0.1); border-radius: 8px;">
@@ -2821,7 +3798,7 @@ function renderProjections(year) {
     </div>
   `;
 
-  listElement.innerHTML = forecast.map((item, index) => {
+  listElement.innerHTML = forecast.map((item) => {
     const monthBalance = item.projectedBalance;
     const isNegative = monthBalance < 0;
     const bgColor = isNegative ? 'rgba(239, 68, 68, 0.1)' : 'rgba(34, 197, 94, 0.1)';
@@ -2859,9 +3836,14 @@ function renderProjections(year) {
 
 function renderAnnualCategoryReport(year) {
   const result = {};
-  state.transactions.filter((item) => new Date(item.date).getFullYear() === year).forEach((item) => {
+  state.transactions.filter((item) => periodMatches(item.date, year)
+    && (item.status === 'paid' || item.sourceType === 'creditPurchase'))
+    .forEach((item) => {
+      if (!['income', 'expense'].includes(item.type)) return;
+      if (item.type === 'expense' && !isCategoryExpenseIncluded(item)) return;
     const label = item.type === 'expense' ? getCategory(item.category)?.name || item.category : 'Receitas';
-    result[label] = (result[label] || 0) + item.value;
+    const amount = Number.isSafeInteger(item.valueCents) ? fromCents(item.valueCents) : item.value;
+    result[label] = (result[label] || 0) + amount;
   });
   const items = Object.entries(result).sort((a, b) => b[1] - a[1]);
   charts.reportCategory = renderChart(charts.reportCategory, dom.chartReportCategory, {
@@ -2873,9 +3855,8 @@ function renderAnnualCategoryReport(year) {
 
 function renderMonthlyComparison(year) {
   const monthly = Array.from({ length: 12 }, (_, index) => {
-    const totalIncome = sumByPeriod(year, index + 1, 'income');
-    const totalExpense = sumByPeriod(year, index + 1, 'expense');
-    return totalIncome - totalExpense;
+    const totals = calculatePeriodTotals(state.transactions, year, index + 1);
+    return fromCents(totals.incomeCents - totals.expenseCents);
   });
   charts.reportMonthly = renderChart(charts.reportMonthly, dom.chartReportMonthly, {
     type: 'bar',
@@ -2886,8 +3867,13 @@ function renderMonthlyComparison(year) {
 
 function renderPaymentDistribution(year) {
   const breakdown = {};
-  state.transactions.filter((item) => new Date(item.date).getFullYear() === year).forEach((item) => {
-    breakdown[item.payment || 'Outros'] = (breakdown[item.payment || 'Outros'] || 0) + item.value;
+  state.transactions
+    .filter((item) => periodMatches(item.date, year)
+      && (item.status === 'paid' || item.sourceType === 'creditPurchase')
+      && ['income', 'expense'].includes(item.type))
+    .forEach((item) => {
+      const amount = Number.isSafeInteger(item.valueCents) ? fromCents(item.valueCents) : item.value;
+      breakdown[item.payment || 'Outros'] = (breakdown[item.payment || 'Outros'] || 0) + amount;
   });
   const items = Object.entries(breakdown);
   charts.reportPayment = renderChart(charts.reportPayment, dom.chartReportPayment, {
@@ -2898,41 +3884,55 @@ function renderPaymentDistribution(year) {
 }
 
 function renderTopExpenses(year) {
-  const items = state.transactions.filter((item) => new Date(item.date).getFullYear() === year && item.type === 'expense')
-    .sort((a, b) => b.value - a.value).slice(0, 10);
-  dom.reportTopExpenses.innerHTML = items.map((item, index) => `<div><strong>#${index + 1}</strong> ${item.description} <span>${formatCurrency(item.value)}</span></div>`).join('') || '<div>Nenhum gasto registrado neste ano.</div>';
+  const items = state.transactions
+    .filter((item) => periodMatches(item.date, year) && isCategoryExpenseIncluded(item))
+    .sort((a, b) => (b.valueCents || toCents(b.value)) - (a.valueCents || toCents(a.value)))
+    .slice(0, 10);
+  dom.reportTopExpenses.innerHTML = items.map((item, index) => (
+    `<div><strong>#${index + 1}</strong> ${sanitizeHtml(item.description)} <span>${formatCurrencyFromCents(item.valueCents || toCents(item.value))}</span></div>`
+  )).join('') || '<div>Nenhum gasto realizado neste período.</div>';
 }
 
 function renderTopIncomeMonth(year) {
-  // Calculate total income for each month
-  const monthlyIncome = {};
-  state.transactions.filter((item) => new Date(item.date).getFullYear() === year && item.type === 'income').forEach((item) => {
-    const month = new Date(item.date).getMonth() + 1;
-    monthlyIncome[month] = (monthlyIncome[month] || 0) + item.value;
+  const monthlyIncome = Array.from({ length: 12 }, (_, index) => {
+    const totals = calculatePeriodTotals(state.transactions, year, index + 1);
+    return { month: index + 1, incomeCents: totals.incomeCents };
   });
+  const top = monthlyIncome.reduce((best, item) => (
+    item.incomeCents > best.incomeCents ? item : best
+  ), { month: null, incomeCents: 0 });
 
-  // Find the month with highest income
-  let topMonth = null;
-  let maxIncome = 0;
-  Object.entries(monthlyIncome).forEach(([month, income]) => {
-    if (income > maxIncome) {
-      maxIncome = income;
-      topMonth = Number(month);
-    }
-  });
-
-  if (topMonth) {
-    dom.reportTopIncomeMonth.innerHTML = `<div><strong>${labelsMonths[topMonth - 1]}</strong> <span>${formatCurrency(maxIncome)}</span></div>`;
+  if (top.month !== null && top.incomeCents > 0) {
+    dom.reportTopIncomeMonth.innerHTML = `<div><strong>${labelsMonths[top.month - 1]}</strong> <span>${formatCurrencyFromCents(top.incomeCents)}</span></div>`;
+    charts.reportTopIncome = renderChart(charts.reportTopIncome, dom.chartReportTopIncome, {
+      type: 'bar',
+      data: {
+        labels: [labelsMonths[top.month - 1]],
+        datasets: [{
+          label: 'Entradas realizadas',
+          data: [fromCents(top.incomeCents)],
+          backgroundColor: 'rgba(34,197,94,0.75)'
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: chartScaleOptions() }
+    });
   } else {
-    dom.reportTopIncomeMonth.innerHTML = '<div>Nenhuma receita registrada neste ano.</div>';
+    dom.reportTopIncomeMonth.innerHTML = '<div>Nenhuma entrada realizada neste período.</div>';
+    charts.reportTopIncome = renderChart(charts.reportTopIncome, dom.chartReportTopIncome, {
+      type: 'bar',
+      data: { labels: [], datasets: [{ label: 'Entradas realizadas', data: [] }] },
+      options: { responsive: true, plugins: { legend: { display: false } } }
+    });
   }
 }
 
 function renderHeatmap(year) {
   const matrix = Array.from({ length: 31 }, () => 0);
-  state.transactions.filter((item) => new Date(item.date).getFullYear() === year && item.type === 'expense').forEach((item) => {
-    const day = new Date(item.date).getDate() - 1;
-    matrix[day] += item.value;
+  state.transactions
+    .filter((item) => periodMatches(item.date, year) && isCategoryExpenseIncluded(item))
+    .forEach((item) => {
+    const day = Number(item.date.slice(-2)) - 1;
+    matrix[day] += fromCents(Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value));
   });
   const maxValue = Math.max(...matrix, 1);
   dom.spendingHeatmap.innerHTML = matrix.map((value, index) => {
@@ -2947,15 +3947,20 @@ function renderLimitsTable() {
   const filterMonth = state.filters.month === 'all' ? null : Number(state.filters.month);
 
   dom.limitTableBody.innerHTML = state.categories.map((category) => {
-    const monthlySpent = state.transactions.filter((item) => {
-      const date = new Date(item.date);
-      const yearMatch = filterYear === null || date.getFullYear() === filterYear;
-      const monthMatch = filterMonth === null || date.getMonth() + 1 === filterMonth;
-      return item.type === 'expense' && item.category === category.id && yearMatch && monthMatch;
-    }).reduce((sum, item) => sum + item.value, 0);
-    const usage = category.limit ? Math.min(100, Math.round((monthlySpent / category.limit) * 100)) : 0;
-    const status = category.limit ? `${usage}% usado` : 'Sem limite';
-    return `<tr><td>${category.icon} ${category.name}</td><td><input type="number" min="0" data-category="${category.id}" value="${category.limit}" class="limit-input"></td><td>${status}</td></tr>`;
+    const monthlySpentCents = state.transactions
+      .filter((item) => periodMatches(item.date, filterYear, filterMonth)
+        && isCategoryExpenseIncluded(item)
+        && item.category === category.id)
+      .reduce((sum, item) => sum + (
+        Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value)
+      ), 0);
+    const limitCents = Number.isSafeInteger(category.limitCents)
+      ? category.limitCents
+      : toCents(category.limit || 0);
+    const usage = limitCents ? Math.min(100, Math.round((monthlySpentCents / limitCents) * 100)) : 0;
+    const status = limitCents ? `${usage}% usado` : 'Sem limite';
+    const displayValue = convertBaseCentsToInputValue(limitCents);
+    return `<tr><td>${sanitizeHtml(category.icon)} ${sanitizeHtml(category.name)}</td><td><input type="number" min="0" step="0.01" data-category="${sanitizeHtml(category.id)}" value="${displayValue === null ? '' : displayValue}" class="limit-input" aria-label="Limite de ${sanitizeHtml(category.name)}"></td><td>${status}</td></tr>`;
   }).join('');
 }
 
@@ -2985,59 +3990,11 @@ function handleBackupImport(event) {
     try {
       const parsed = JSON.parse(reader.result);
       if (!parsed || typeof parsed !== 'object') throw new Error('Formato inválido');
-      
-      // PHASE 2: Validar estrutura e conteúdo
-      // Validar categories
-      if (parsed.categories && Array.isArray(parsed.categories)) {
-        for (let cat of parsed.categories) {
-          if (!cat.id || !cat.name || !cat.type) throw new Error('Categoria inválida');
-          if (!['income', 'expense'].includes(cat.type)) throw new Error('Tipo de categoria inválido');
-          if (cat.name.length > 50) throw new Error('Nome de categoria muito longo');
-          if (cat.limit && (cat.limit < 0 || cat.limit > 999999.99)) throw new Error('Limite de categoria inválido');
-        }
-      }
-      
-      // Validar transactions
-      if (parsed.transactions && Array.isArray(parsed.transactions)) {
-        for (let tx of parsed.transactions) {
-          if (!tx.id || !tx.date || !tx.type || tx.value === undefined) throw new Error('Transação inválida');
-          if (!['income', 'expense'].includes(tx.type)) throw new Error('Tipo de transação inválido');
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(tx.date)) throw new Error('Data de transação inválida');
-          if (tx.value <= 0 || tx.value > 999999.99) throw new Error('Valor inválido');
-          if (tx.description && tx.description.length > 200) throw new Error('Descrição muito longa');
-        }
-      }
-      
-      // Validar fixedExpenses
-      if (parsed.fixedExpenses && Array.isArray(parsed.fixedExpenses)) {
-        for (let fx of parsed.fixedExpenses) {
-          if (!fx.id || !fx.description || fx.value === undefined) throw new Error('Gasto fixo inválido');
-          if (fx.value <= 0 || fx.value > 999999.99) throw new Error('Valor de gasto fixo inválido');
-          if (fx.day < 1 || fx.day > 28) throw new Error('Dia inválido');
-          if (!['fixed', 'variable'].includes(fx.type || 'fixed')) throw new Error('Tipo de gasto inválido');
-        }
-      }
-      
-      state = {
-        settings: parsed.settings || defaultSettings,
-        categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
-        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-        fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
-        deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
-        sort: parsed.sort || state.sort,
-        pagination: parsed.pagination || state.pagination,
-        filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || state.filters) },
-        reportYear: parsed.reportYear || state.reportYear,
-        goals: Array.isArray(parsed.goals) ? parsed.goals : []
-      };
-      
-      // Migrar dados antigos de gastos fixos
-      state.fixedExpenses = state.fixedExpenses.map((item) => ({
-        ...item,
-        type: item.type || 'fixed',
-        duration: item.duration || null,
-        startMonth: item.startMonth || null
-      }));
+      const candidate = migrateState(parsed.state || parsed);
+      const issues = validateStateShape(candidate);
+      if (issues.length > 0) throw new Error(issues.slice(0, 3).join('; '));
+      performAutomaticBackup();
+      state = candidate;
       
       calcCache.clear();
       saveState();
@@ -3073,10 +4030,12 @@ function toggleMobileMenu() {
 }
 
 function closeMobileMenu() {
+  if (closeMobileNavigation(document, window)) return;
   const menuOpen = document.body.classList.contains('menu-open');
-  if (!menuOpen) return;
-  document.body.classList.remove('menu-open');
-  updateMenuToggleButton(false);
+  if (menuOpen) {
+    document.body.classList.remove('menu-open');
+    updateMenuToggleButton(false);
+  }
 }
 
 function attachEventListeners() {
@@ -3141,8 +4100,31 @@ function attachEventListeners() {
     event.preventDefault();
     renderBalanceProjection();
   });
+  if (dom.calculateLongTermProjectionButton) {
+    dom.calculateLongTermProjectionButton.addEventListener('click', renderLongTermProjection);
+  }
   
   if (document.getElementById('openAddTransaction')) document.getElementById('openAddTransaction').addEventListener('click', () => openTransactionModal());
+  if (dom.emptyAddTransaction) dom.emptyAddTransaction.addEventListener('click', () => openTransactionModal());
+  if (dom.emptyAddInitialBalance) dom.emptyAddInitialBalance.addEventListener('click', openInitialBalanceModal);
+  if (dom.emptyOpenCoffers) {
+    dom.emptyOpenCoffers.addEventListener('click', () => {
+      document.querySelector('.nav-link[data-target="coffers"]')?.click();
+    });
+  }
+  if (dom.reportsEmptyAddTransaction) {
+    dom.reportsEmptyAddTransaction.addEventListener('click', () => openTransactionModal());
+  }
+  if (document.getElementById('openPurchaseChecker')) {
+    document.getElementById('openPurchaseChecker').addEventListener('click', () => {
+      document.querySelector('.nav-link[data-target="reports"]')?.click();
+      document.getElementById('projections-tab-button')?.click();
+      requestAnimationFrame(() => {
+        dom.purchaseValue?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        dom.purchaseValue?.focus();
+      });
+    });
+  }
   if (document.getElementById('openAddInitialBalance')) document.getElementById('openAddInitialBalance').addEventListener('click', () => openInitialBalanceModal());
   if (document.getElementById('openAddCategory')) document.getElementById('openAddCategory').addEventListener('click', () => openCategoryModal());
   if (document.getElementById('openAddFixedExpense')) document.getElementById('openAddFixedExpense').addEventListener('click', () => openFixedModal());
@@ -3154,6 +4136,9 @@ function attachEventListeners() {
   if (document.getElementById('clearCategoriesButton')) document.getElementById('clearCategoriesButton').addEventListener('click', clearPersonalizedCategories);
   if (document.getElementById('clearFixedExpensesButton')) document.getElementById('clearFixedExpensesButton').addEventListener('click', clearFixedExpenses);
   if (document.getElementById('backupButton')) document.getElementById('backupButton').addEventListener('click', backupData);
+  if (document.getElementById('downloadSettingsBackupButton')) {
+    document.getElementById('downloadSettingsBackupButton').addEventListener('click', backupData);
+  }
   if (document.getElementById('installAppButton')) document.getElementById('installAppButton').addEventListener('click', installApp);
   if (document.getElementById('makeBackupFromWarning')) document.getElementById('makeBackupFromWarning').addEventListener('click', () => {
     closeModals();
@@ -3171,6 +4156,33 @@ function attachEventListeners() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeMobileMenu();
   });
+  document.addEventListener('keydown', (event) => {
+    const modal = document.querySelector('.modal.active[aria-modal="true"]');
+    if (!modal) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModals();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(modal.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter((element) => element.getClientRects().length > 0);
+    if (focusable.length === 0) {
+      event.preventDefault();
+      modal.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !modal.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !modal.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
   window.addEventListener('resize', () => {
     if (window.innerWidth > 1100) closeMobileMenu();
   });
@@ -3184,13 +4196,37 @@ function attachEventListeners() {
   // PHASE 11: Event listeners para moeda e notificações
   if (document.getElementById('currencySelect')) {
     document.getElementById('currencySelect').addEventListener('change', (e) => {
-      state.settings.currency = e.target.value;
-      saveState();
-      renderAllUI();
-      showToast(`💱 Moeda alterada para ${currencySettings[e.target.value].name}`, 'success');
+      try {
+        state = changeDisplayCurrency(state, e.target.value, dateKey(new Date()));
+        saveState();
+        renderAllUI();
+        updateCurrencyValueLabel();
+        showToast(`Moeda de exibição: ${SUPPORTED_CURRENCIES[e.target.value].label}. Valores-base preservados em BRL.`, 'success');
+      } catch (error) {
+        e.target.value = state.settings.currency || BASE_CURRENCY;
+        showToast(error.message, 'error');
+      }
     });
     // Carregar moeda salva
     document.getElementById('currencySelect').value = state.settings.currency || 'BRL';
+  }
+  if (document.getElementById('addFxRateButton')) {
+    document.getElementById('addFxRateButton').addEventListener('click', addFxRate);
+  }
+  if (document.getElementById('saveProjectionSettings')) {
+    document.getElementById('saveProjectionSettings').addEventListener('click', () => {
+      const percent = Number(document.getElementById('annualInflationRate').value);
+      const bps = Math.round(percent * 100);
+      if (!Number.isFinite(percent) || percent < 0 || percent > 100 || !Number.isInteger(bps)) {
+        showToast('Inflação deve estar entre 0% e 100%.', 'error');
+        return;
+      }
+      state.settings.annualInflationBps = bps;
+      saveState();
+      renderReportPage();
+      updateRawEditor();
+      showToast('Parâmetro de inflação salvo.', 'success');
+    });
   }
   
   if (document.getElementById('notificationsToggle')) {
@@ -3238,6 +4274,46 @@ function attachEventListeners() {
   });
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', closeModals));
   if (document.getElementById('transactionForm')) document.getElementById('transactionForm').addEventListener('submit', handleTransactionSubmit);
+  if (document.getElementById('transactionType')) {
+    document.getElementById('transactionType').addEventListener('change', (event) => {
+      rebuildTransactionCategoryOptions(event.target.value);
+      updateCreditPurchaseFields();
+    });
+  }
+  if (dom.transactionPaymentMethod) {
+    dom.transactionPaymentMethod.addEventListener('change', updateCreditPurchaseFields);
+  }
+  if (dom.transactionCofferOperation) {
+    dom.transactionCofferOperation.addEventListener('change', updateCofferTransactionFields);
+  }
+  if (document.getElementById('cofferType')) {
+    document.getElementById('cofferType').addEventListener('change', updateCofferTypeFields);
+  }
+  if (document.getElementById('cofferForm')) {
+    document.getElementById('cofferForm').addEventListener('submit', handleCofferSubmit);
+  }
+  if (document.getElementById('cofferSettingsForm')) {
+    document.getElementById('cofferSettingsForm').addEventListener('submit', saveCofferSettings);
+  }
+  if (document.getElementById('createCofferButton')) {
+    document.getElementById('createCofferButton').addEventListener('click', () => openCofferModal());
+  }
+  if (dom.creditCardForm) dom.creditCardForm.addEventListener('submit', handleCreditCardSubmit);
+  if (dom.creditInvoicePaymentForm) {
+    dom.creditInvoicePaymentForm.addEventListener('submit', handleCreditInvoicePaymentSubmit);
+  }
+  if (dom.creditInvoicePaymentSource) {
+    dom.creditInvoicePaymentSource.addEventListener('change', updateCreditInvoicePaymentSource);
+  }
+  if (document.getElementById('createCreditCardButton')) {
+    document.getElementById('createCreditCardButton').addEventListener('click', () => openCreditCardModal());
+  }
+  document.querySelectorAll('[data-coffer-template]').forEach((button) => {
+    button.addEventListener('click', createCofferTemplate);
+  });
+  if (document.getElementById('initialBalanceForm')) {
+    document.getElementById('initialBalanceForm').addEventListener('submit', handleInitialBalanceSubmit);
+  }
   if (document.getElementById('categoryForm')) document.getElementById('categoryForm').addEventListener('submit', handleCategorySubmit);
   if (document.getElementById('fixedForm')) document.getElementById('fixedForm').addEventListener('submit', handleFixedSubmit);
   if (document.getElementById('fixedType')) document.getElementById('fixedType').addEventListener('change', toggleDurationField);
@@ -3333,9 +4409,19 @@ function handleLimitInputs(event) {
   if (!event.target.matches('.limit-input')) return;
   const categoryId = event.target.dataset.category;
   const value = Number(event.target.value);
+  if (!Number.isFinite(value) || value < 0) {
+    showToast('Informe um limite válido e não negativo.', 'error');
+    return;
+  }
+  const limitCents = value === 0 ? 0 : convertInputAmountToBaseCents(value);
+  if (limitCents === null) {
+    showToast(`Cadastre uma taxa de câmbio válida para ${state.settings.currency}.`, 'error');
+    return;
+  }
   const category = state.categories.find((item) => item.id === categoryId);
   if (!category) return;
-  category.limit = value;
+  category.limitCents = limitCents;
+  category.limit = fromCents(limitCents);
   saveState();
   renderLimitsTable();
 }
@@ -3347,49 +4433,141 @@ function handleLimitInputs(event) {
  * @param {Object} [transaction=null] - Transação a editar (null = novo)
  * @returns {void}
  */
-function openTransactionModal(transaction = null) {
+function openTransactionModal(transaction = null, options = {}) {
   // PHASE 3: Usar funções auxiliares para reduzir duplicação
   const modal = document.getElementById('transactionModal');
-  modal.classList.add('active');
+  activateModal(modal);
   const title = transaction ? 'Editar lançamento' : 'Novo lançamento';
   document.getElementById('transactionModalTitle').textContent = title;
   
   const categoryId = transaction?.category || state.categories.find((cat) => cat.type === 'expense')?.id || '';
   setFormValues({
-    transactionDate: transaction?.date || new Date().toISOString().slice(0, 10),
+    transactionDate: transaction?.date || dateKey(new Date()),
     transactionType: transaction?.type || 'expense',
     transactionCategory: categoryId,
     transactionSubcategory: transaction?.subcategory || '',
-    transactionValue: transaction?.value || '',
+    transactionValue: transaction
+      ? transaction.currencyAtEntry === state.settings.currency
+        && Number.isSafeInteger(transaction.amountCentsAtEntry)
+        ? fromCents(transaction.amountCentsAtEntry)
+        : convertBaseCentsToInputValue(transaction.valueCents || toCents(transaction.value), transaction.date)
+      : '',
     transactionPayment: transaction?.payment || '',
     transactionStatus: transaction?.status || 'paid',
-    transactionDescription: transaction?.description || ''
+    transactionDescription: transaction?.description || '',
+    transactionCofferOperation: transaction?.cofferOperation || options.operation || '',
+    transactionCoffer: transaction?.cofferId || options.cofferId || ''
   });
   modal.dataset.editId = transaction?.id || '';
+  rebuildTransactionCategoryOptions(transaction?.type || 'expense');
+  updateCofferTransactionFields();
+}
+
+function updateCofferTransactionFields() {
+  const operation = dom.transactionCofferOperation?.value || '';
+  const typeSelect = document.getElementById('transactionType');
+  const categorySelect = dom.transactionCategory;
+  if (!typeSelect || !categorySelect || !dom.transactionCoffer) return;
+  const transactionTypeByOperation = {
+    deposit: 'transfer',
+    withdrawal: 'transfer',
+    purchase: 'expense',
+    yield: 'income'
+  };
+  const operationType = transactionTypeByOperation[operation];
+  typeSelect.disabled = Boolean(operationType);
+  if (operationType) {
+    typeSelect.value = operationType;
+    rebuildTransactionCategoryOptions(operationType);
+  }
+  const isAccountTransfer = operation === 'deposit' || operation === 'withdrawal';
+  categorySelect.disabled = isAccountTransfer;
+  categorySelect.required = !isAccountTransfer;
+  if (isAccountTransfer) categorySelect.value = '';
+  dom.transactionCoffer.disabled = !operation;
+  dom.transactionCoffer.required = Boolean(operation);
+  if (operation === 'purchase' && dom.transactionCoffer.value) {
+    const coffer = state.coffers.find((item) => item.id === dom.transactionCoffer.value);
+    if (coffer?.type !== 'marketplace') {
+      const marketplaceCoffer = state.coffers.find((item) => item.type === 'marketplace');
+      if (marketplaceCoffer) dom.transactionCoffer.value = marketplaceCoffer.id;
+    }
+  }
+  if (!operation) {
+    typeSelect.disabled = false;
+    categorySelect.disabled = false;
+    categorySelect.required = true;
+    rebuildTransactionCategoryOptions(typeSelect.value);
+  }
 }
 
 function openInitialBalanceModal() {
-  // PHASE 3: Usar funções auxiliares
-  const modal = document.getElementById('transactionModal');
-  modal.classList.add('active');
-  document.getElementById('transactionModalTitle').textContent = 'Adicionar saldo inicial';
-  
-  const categoryId = state.categories.find((cat) => cat.name.toLowerCase().includes('saldo') || cat.name.toLowerCase().includes('outros'))?.id || state.categories.find((cat) => cat.type === 'both')?.id || '';
+  const modal = document.getElementById('initialBalanceModal');
+  if (!modal) return;
+  activateModal(modal);
+  document.getElementById('initialBalanceModalTitle').textContent =
+    state.initialBalances?.length ? 'Editar saldo inicial' : 'Adicionar saldo inicial';
+  const current = state.initialBalances?.[0];
   setFormValues({
-    transactionDate: new Date().toISOString().slice(0, 10),
-    transactionType: 'income',
-    transactionCategory: categoryId,
-    transactionSubcategory: 'Saldo inicial',
-    transactionValue: '',
-    transactionPayment: 'Saldo',
-    transactionStatus: 'paid',
-    transactionDescription: 'Saldo inicial do mês'
+    initialBalanceValue: current
+      ? current.currencyAtEntry === state.settings.currency
+        && Number.isSafeInteger(current.amountCentsAtEntry)
+        ? fromCents(current.amountCentsAtEntry)
+        : convertBaseCentsToInputValue(current.valueCents, current.date)
+      : '',
+    initialBalanceDate: current?.date || dateKey(new Date()),
+    initialBalanceNote: current?.note || 'Saldo inicial'
   });
-  modal.dataset.editId = '';
+  modal.dataset.editId = current?.id || '';
+}
+
+function handleInitialBalanceSubmit(event) {
+  event.preventDefault();
+  const modal = document.getElementById('initialBalanceModal');
+  const id = modal?.dataset.editId;
+  const date = document.getElementById('initialBalanceDate').value;
+  const value = Number(document.getElementById('initialBalanceValue').value);
+  const note = document.getElementById('initialBalanceNote').value.trim();
+  const existing = id ? state.initialBalances.find((item) => item.id === id) : null;
+  if (!normalizeDate(date) || !Number.isFinite(value) || value < 0) {
+    showToast('Informe uma data e um valor válidos.', 'error');
+    return;
+  }
+  const valueCents = convertInputAmountToBaseCents(value, date, existing);
+  const fxSnapshot = currencySnapshot(value, date, existing);
+  if (valueCents === null || !fxSnapshot) {
+    showToast(`Não há taxa de câmbio registrada para ${state.settings.currency} na data do saldo.`, 'error');
+    return;
+  }
+  const record = {
+    ...(existing || {}),
+    id: id || createId(),
+    date,
+    value: valueCents / 100,
+    valueCents,
+    note: sanitizeHtml(note || 'Saldo inicial'),
+    type: 'initialBalance',
+    ...fxSnapshot,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
+  state.initialBalances = [record];
+  saveState();
+  closeModals();
+  renderAllUI({ dashboard: true, reports: true, editor: true });
+  showToast('Saldo inicial atualizado.', 'success');
 }
 
 function closeModals() {
-  document.querySelectorAll('.modal.active').forEach((modal) => modal.classList.remove('active'));
+  document.querySelectorAll('.modal.active').forEach((modal) => {
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    modal.setAttribute('aria-modal', 'false');
+  });
+  if (activeModalTrigger instanceof HTMLElement) activeModalTrigger.focus();
+  activeModalTrigger = null;
 }
 
 /**
@@ -3410,78 +4588,136 @@ function handleTransactionSubmit(event) {
   const payment = document.getElementById('transactionPayment').value.trim();
   const status = document.getElementById('transactionStatus').value;
   const description = document.getElementById('transactionDescription').value.trim();
+  const cofferOperation = dom.transactionCofferOperation?.value || '';
+  const cofferId = dom.transactionCoffer?.value || '';
+  const existing = id ? state.transactions.find((item) => item.id === id) : null;
 
-  // PHASE 2: Validação Rigorosa
-  if (!date || !category || !description || !value) {
+  if (existing?.cofferOperation && !cofferOperation) {
+    showToast('Uma operação vinculada deve permanecer vinculada a um cofrinho.', 'error');
+    return;
+  }
+  if (!date || !description || !value || (!cofferOperation && type !== 'transfer' && !category)) {
     showToast('Preencha todos os campos obrigatórios.', 'error');
     return;
   }
-
-  // Validar formato de data (YYYY-MM-DD)
-  if (!validateInput('date', date)) {
-    showToast('Data deve estar no formato YYYY-MM-DD.', 'error');
+  if (!normalizeDate(date)) {
+    showToast('Informe uma data válida.', 'error');
     return;
   }
-
-  // Validar se data não é no futuro
-  const txDate = new Date(date);
-  if (txDate > new Date()) {
+  if (date > dateKey(new Date()) && status === 'paid') {
     showToast('Data não pode estar no futuro.', 'error');
     return;
   }
-
-  // Validar valor (numérico, positivo, limite máximo R$999.999,99)
-  if (!validateInput('currency', value.toString())) {
-    showToast('Valor deve ser numérico e positivo (máx: 999.999,99).', 'error');
+  if (!['paid', 'pending', 'scheduled'].includes(status)) {
+    showToast('Selecione um status válido.', 'error');
     return;
   }
-
-  // Validar range de valor
-  if (value <= 0 || value > 999999.99) {
+  if (!Number.isFinite(value) || value <= 0 || value > 999999.99) {
     showToast('Valor deve estar entre 0,01 e 999.999,99.', 'error');
     return;
   }
-
-  // Validar descrição (máx 200 caracteres, sem XSS)
   if (description.length > 200) {
     showToast('Descrição deve ter no máximo 200 caracteres.', 'error');
     return;
   }
-  if (!/^[a-zA-Z0-9\s\-.,()àáâãäåèéêëìíîïòóôõöùúûüçñÀÁÂÃÄÅÈÉÊËÌÍÎÏÒÓÔÕÖÙÚÛÜÇÑ]+$/.test(description)) {
-    showToast('Descrição contém caracteres inválidos.', 'error');
-    return;
-  }
-
-  // Validar subcategoria se preenchida
   if (subcategory && subcategory.length > 100) {
     showToast('Subcategoria deve ter no máximo 100 caracteres.', 'error');
     return;
   }
-
-  // Validar payment (máx 50 caracteres)
   if (payment && payment.length > 50) {
     showToast('Método de pagamento deve ter no máximo 50 caracteres.', 'error');
     return;
   }
 
-  // Validar que categoria existe
-  if (!state.categories.find(cat => cat.id === category)) {
+  const operationTypes = {
+    deposit: 'transfer',
+    withdrawal: 'transfer',
+    purchase: 'expense',
+    yield: 'income'
+  };
+  const resolvedType = cofferOperation ? operationTypes[cofferOperation] : type;
+  const needsCategory = resolvedType === 'income' || resolvedType === 'expense';
+  if (!['income', 'expense', 'transfer'].includes(resolvedType)) {
+    showToast('Tipo de lançamento inválido.', 'error');
+    return;
+  }
+  if (needsCategory && !state.categories.find((cat) => cat.id === category)) {
     showToast('Categoria selecionada não existe.', 'error');
     return;
   }
-
-  // Validar type
-  if (!['income', 'expense'].includes(type)) {
-    showToast('Tipo de transação inválido.', 'error');
+  const categoryRecord = state.categories.find((item) => item.id === category);
+  if (needsCategory && categoryRecord
+    && categoryRecord.type !== 'both' && categoryRecord.type !== resolvedType) {
+    showToast('A categoria não corresponde ao tipo de lançamento.', 'error');
     return;
   }
 
-  // Sanitizar descrição
-  const safeDescription = sanitizeHtml(description);
-  const safeSubcategory = sanitizeHtml(subcategory);
-  const safePayment = sanitizeHtml(payment);
-
-  const record = { id: id || createId(), date, type, category, subcategory: safeSubcategory, value, payment: safePayment, status, description: safeDescription };
+  const timestamp = new Date().toISOString();
+  const safeDescription = description;
+  const safeSubcategory = subcategory;
+  const safePayment = payment;
+  const valueCents = convertInputAmountToBaseCents(value, date, existing);
+  const fxSnapshot = currencySnapshot(value, date, existing);
+  if (valueCents === null || !fxSnapshot) {
+    showToast(`Não há taxa de câmbio registrada para ${state.settings.currency} na data do lançamento.`, 'error');
+    return;
+  }
+  let record;
+  if (cofferOperation) {
+    const coffer = state.coffers.find((item) => item.id === cofferId);
+    if (!coffer) {
+      showToast('Selecione um cofrinho válido.', 'error');
+      return;
+    }
+    try {
+      record = createCofferOperation({
+        coffer,
+        coffers: state.coffers,
+        transactions: state.transactions.filter((item) => item.id !== id),
+        operation: cofferOperation,
+        amountCents: valueCents,
+        date,
+        status,
+        id: id || createId(),
+        description,
+        category: needsCategory ? category : '',
+        settings: state.cofferSettings
+      });
+    } catch (error) {
+      showToast(`Operação não registrada: ${error.message}`, 'error');
+      return;
+    }
+    record.subcategory = safeSubcategory;
+    record.payment = safePayment || 'Cofrinho';
+    Object.assign(record, fxSnapshot);
+  } else {
+    if (type === 'transfer') {
+      showToast('Transferências devem estar vinculadas a um cofrinho.', 'error');
+      return;
+    }
+    record = {
+      ...(existing || {}),
+      id: id || createId(),
+      date,
+      type: resolvedType,
+      category,
+      subcategory: safeSubcategory,
+      value: valueCents / 100,
+      valueCents,
+      payment: safePayment,
+      status,
+      description: safeDescription,
+      ...fxSnapshot
+    };
+  }
+  record = {
+    ...(existing || {}),
+    ...record,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
   if (id) {
     const index = state.transactions.findIndex((item) => item.id === id);
     if (index >= 0) state.transactions[index] = record;
@@ -3500,7 +4736,7 @@ function handleTransactionSubmit(event) {
 function openCategoryModal(category = null) {
   // PHASE 3: Usar funções auxiliares
   const modal = document.getElementById('categoryModal');
-  modal.classList.add('active');
+  activateModal(modal);
   const title = category ? 'Editar categoria' : 'Nova categoria';
   document.getElementById('categoryModalTitle').textContent = title;
   
@@ -3509,7 +4745,11 @@ function openCategoryModal(category = null) {
     categoryType: category?.type || 'expense',
     categoryIcon: category?.icon || '',
     categorySubcategories: category?.subcategories?.join(', ') || '',
-    categoryLimit: category?.limit || 0
+    categoryLimit: category
+      ? (convertBaseCentsToInputValue(
+        Number.isSafeInteger(category.limitCents) ? category.limitCents : toCents(category.limit || 0)
+      ) ?? 0)
+      : 0
   });
   modal.dataset.editId = category?.id || '';
 }
@@ -3522,6 +4762,12 @@ function handleCategorySubmit(event) {
   const icon = document.getElementById('categoryIcon').value.trim() || '📦';
   const subcategories = document.getElementById('categorySubcategories').value.split(',').map((item) => item.trim()).filter(Boolean);
   const limit = Number(document.getElementById('categoryLimit').value) || 0;
+  const existing = id ? state.categories.find((item) => item.id === id) : null;
+
+  if (existing?.preset) {
+    showToast('Categorias padrão são protegidas contra edição.', 'error');
+    return;
+  }
 
   // PHASE 2: Validação Rigorosa
   if (!name) {
@@ -3541,13 +4787,13 @@ function handleCategorySubmit(event) {
   }
 
   // Validar que categoria com mesmo nome não existe
-  if (!id && state.categories.some(cat => cat.name.toLowerCase() === name.toLowerCase())) {
+  if (state.categories.some((cat) => cat.id !== id && cat.name.toLowerCase() === name.toLowerCase())) {
     showToast('Categoria com este nome já existe.', 'error');
     return;
   }
 
   // Validar type
-  if (!['income', 'expense'].includes(type)) {
+  if (!['income', 'expense', 'both'].includes(type)) {
     showToast('Tipo de categoria inválido.', 'error');
     return;
   }
@@ -3575,10 +4821,15 @@ function handleCategorySubmit(event) {
     showToast('Limite deve estar entre 0 e 999.999,99.', 'error');
     return;
   }
+  const limitCents = limit === 0 ? 0 : convertInputAmountToBaseCents(limit);
+  if (limitCents === null) {
+    showToast(`Cadastre uma taxa de câmbio válida para ${state.settings.currency}.`, 'error');
+    return;
+  }
 
   // Validar icon (máx 2 caracteres emoji ou símbolo)
-  if (icon.length > 2) {
-    showToast('Ícone deve ser um emoji ou símbolo simples.', 'error');
+  if (Array.from(icon).length > 8 || /[<>]/.test(icon)) {
+    showToast('Ícone deve ser um emoji ou símbolo curto.', 'error');
     return;
   }
 
@@ -3586,7 +4837,22 @@ function handleCategorySubmit(event) {
   const safeName = sanitizeHtml(name);
   const safeSubcategories = subcategories.map(sub => sanitizeHtml(sub));
 
-  const record = { id: id || createId(), name: safeName, type, icon, subcategories: safeSubcategories, limit, preset: false };
+  const timestamp = new Date().toISOString();
+  const record = {
+    ...(existing || {}),
+    id: id || createId(),
+    name: safeName,
+    type,
+    icon,
+    subcategories: safeSubcategories,
+    limit: fromCents(limitCents),
+    limitCents,
+    preset: false,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
   if (id) {
     const index = state.categories.findIndex((item) => item.id === id);
     if (index >= 0) state.categories[index] = record;
@@ -3604,7 +4870,7 @@ function handleCategorySubmit(event) {
 function openFixedModal(item = null) {
   // PHASE 3: Usar funções auxiliares
   const modal = document.getElementById('fixedModal');
-  modal.classList.add('active');
+  activateModal(modal);
   const title = item ? 'Editar gasto' : 'Novo gasto';
   document.getElementById('fixedModalTitle').textContent = title;
   
@@ -3612,11 +4878,11 @@ function openFixedModal(item = null) {
   setFormValues({
     fixedDescription: item?.description || '',
     fixedCategory: categoryId,
-    fixedValue: item?.value || '',
+    fixedValue: item ? fromCents(item.valueCents || toCents(item.value)) : '',
     fixedDay: item?.day || 1,
     fixedType: item?.type || 'fixed',
     fixedDuration: item?.duration || '',
-    fixedActive: item?.active ? 'true' : 'true'
+    fixedActive: item ? (item.active ? 'true' : 'false') : 'true'
   });
   modal.dataset.editId = item?.id || '';
   
@@ -3647,7 +4913,8 @@ function handleFixedSubmit(event) {
   const type = document.getElementById('fixedType').value;
   const duration = type === 'variable' ? Number(document.getElementById('fixedDuration').value) : null;
   const active = document.getElementById('fixedActive').value === 'true';
-  const startMonth = type === 'variable' ? new Date().toISOString().slice(0, 7) : null; // YYYY-MM
+  const existing = id ? state.fixedExpenses.find((item) => item.id === id) : null;
+  const startMonth = resolveFixedExpenseStartMonth(type, existing);
 
   // PHASE 2: Validação Rigorosa
   if (!description || !category || !value || !day) {
@@ -3711,7 +4978,23 @@ function handleFixedSubmit(event) {
   // Sanitizar descrição
   const safeDescription = sanitizeHtml(description);
 
-  const record = { id: id || createId(), description: safeDescription, category, value, day, active, type, duration, startMonth };
+  const record = {
+    ...(existing || {}),
+    id: id || createId(),
+    description: safeDescription,
+    category,
+    value,
+    valueCents: toCents(value),
+    day,
+    active,
+    type,
+    duration,
+    startMonth,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
+  };
   if (id) {
     const index = state.fixedExpenses.findIndex((item) => item.id === id);
     if (index >= 0) state.fixedExpenses[index] = record;
@@ -3730,25 +5013,85 @@ function handleTableActions(event) {
   if (!action) return;
   const id = action.dataset.id;
   const type = action.dataset.action;
+  if (type === 'delete-fx-rate') {
+    const rate = state.fxRates.find((item) => item.id === id);
+    if (!rate) return;
+    state.fxRates = state.fxRates.filter((item) => item.id !== id);
+    if (state.settings.currency === rate.currency
+      && !getExchangeRate(state.fxRates, rate.currency, dateKey(new Date()), state.settings.baseCurrency || BASE_CURRENCY)) {
+      state.settings.currency = state.settings.baseCurrency || BASE_CURRENCY;
+    }
+    saveState();
+    renderFxRates();
+    renderAllUI();
+    updateCurrencyValueLabel();
+    updateRawEditor();
+    showToast('Taxa removida; valores armazenados permaneceram inalterados.', 'success');
+    return;
+  }
+  if (type === 'restore-trash') {
+    restoreTrashItem(id);
+    return;
+  }
+  if (type === 'load-scenario' || type === 'delete-scenario') {
+    const index = Number(action.dataset.index);
+    if (!Number.isInteger(index) || index < 0) return;
+    if (type === 'load-scenario') loadScenario(index);
+    else deleteScenario(index);
+    return;
+  }
+  if (type === 'edit-coffer') {
+    const coffer = state.coffers.find((item) => item.id === id);
+    if (coffer) openCofferModal(coffer);
+    return;
+  }
+  const cofferOperations = {
+    'coffer-deposit': 'deposit',
+    'coffer-withdrawal': 'withdrawal',
+    'coffer-purchase': 'purchase',
+    'coffer-yield': 'yield'
+  };
+  if (cofferOperations[type]) {
+    openTransactionModal(null, { cofferId: id, operation: cofferOperations[type] });
+    return;
+  }
+  if (type === 'simulate-coffer-yield') {
+    simulateAndRecordCofferYield(id);
+    return;
+  }
+  if (type === 'delete-coffer') {
+    deleteCoffer(id);
+    return;
+  }
   if (type === 'edit') {
     const transaction = state.transactions.find((item) => item.id === id);
+    if (transaction?.cofferOperation === 'opening') {
+      showToast('Saldo de abertura é um registro imutável; ajuste o cofrinho ou remova-o se não houver movimentações.', 'warning');
+      return;
+    }
     if (transaction) openTransactionModal(transaction);
     return;
   }
   if (type === 'delete') {
-    if (!confirm('Deseja excluir este lançamento?')) return;
-    const transaction = state.transactions.find((item) => item.id === id);
-    if (transaction) {
-      trashBin.moveToTrash('transaction', transaction);
-      state.transactions = state.transactions.filter((item) => item.id !== id);
-      saveState();
-      renderTransactionTable();
-      renderDashboard();
-      renderReportPage();
-      updateRawEditor();
-      renderTrashStatus();
-      showToast('Lançamento movido para a lixeira.', 'success');
-    }
+    showDangerConfirmModal(
+      'Excluir lançamento',
+      'Deseja mover este lançamento para a lixeira?',
+      'EXCLUIR',
+      () => {
+        const transaction = state.transactions.find((item) => item.id === id);
+        if (transaction) {
+          trashBin.moveToTrash('transaction', transaction);
+          state.transactions = state.transactions.filter((item) => item.id !== id);
+          saveState();
+          renderTransactionTable();
+          renderDashboard();
+          renderReportPage();
+          updateRawEditor();
+          renderTrashStatus();
+          showToast('Lançamento movido para a lixeira.', 'success');
+        }
+      }
+    );
     return;
   }
   if (type === 'edit-category') {
@@ -3757,19 +5100,37 @@ function handleTableActions(event) {
     return;
   }
   if (type === 'delete-category') {
-    if (!confirm('Deseja excluir esta categoria? Isso pode afetar lançamentos.')) return;
     const category = state.categories.find((item) => item.id === id);
-    if (category) {
-      trashBin.moveToTrash('category', category);
-      state.categories = state.categories.filter((item) => item.id !== id);
-      saveState();
-      rebuildCategoryDropdowns();
-      renderCategoryTable();
-      renderLimitsTable();
-      updateRawEditor();
-      renderTrashStatus();
-      showToast('Categoria movida para a lixeira.', 'success');
+    if (category?.preset) {
+      showToast('Categorias padrão são protegidas contra exclusão.', 'error');
+      return;
     }
+    const isReferenced = state.transactions.some((item) => item.category === id)
+      || state.fixedExpenses.some((item) => item.category === id);
+    if (isReferenced) {
+      showToast('Categoria vinculada a lançamentos ou gastos fixos. Reclassifique esses itens antes de excluir.', 'warning');
+      return;
+    }
+    showDangerConfirmModal(
+      'Excluir categoria',
+      'Esta categoria pode estar vinculada a lançamentos existentes.',
+      'EXCLUIR',
+      () => {
+        const category = state.categories.find((item) => item.id === id);
+        if (category && !state.transactions.some((item) => item.category === id)
+          && !state.fixedExpenses.some((item) => item.category === id)) {
+          trashBin.moveToTrash('category', category);
+          state.categories = state.categories.filter((item) => item.id !== id);
+          saveState();
+          rebuildCategoryDropdowns();
+          renderCategoryTable();
+          renderLimitsTable();
+          updateRawEditor();
+          renderTrashStatus();
+          showToast('Categoria movida para a lixeira.', 'success');
+        }
+      }
+    );
     return;
   }
   if (type === 'edit-fixed') {
@@ -3778,57 +5139,48 @@ function handleTableActions(event) {
     return;
   }
   if (type === 'delete-fixed') {
-    if (!confirm('Excluir este gasto fixo?')) return;
-    const fixed = state.fixedExpenses.find((item) => item.id === id);
-    if (fixed) {
-      trashBin.moveToTrash('fixedExpense', fixed);
-      state.fixedExpenses = state.fixedExpenses.filter((item) => item.id !== id);
-      saveState();
-      renderFixedTable();
-      updateRawEditor();
-      renderTrashStatus();
-      showToast('Gasto fixo movido para a lixeira.', 'success');
-    }
+    showDangerConfirmModal(
+      'Excluir gasto fixo',
+      'Deseja mover este gasto fixo para a lixeira?',
+      'EXCLUIR',
+      () => {
+        const fixed = state.fixedExpenses.find((item) => item.id === id);
+        if (fixed) {
+          trashBin.moveToTrash('fixedExpense', fixed);
+          state.fixedExpenses = state.fixedExpenses.filter((item) => item.id !== id);
+          saveState();
+          renderFixedTable();
+          updateRawEditor();
+          renderTrashStatus();
+          showToast('Gasto fixo movido para a lixeira.', 'success');
+        }
+      }
+    );
     return;
   }
 }
 
 function applyFixedExpenses() {
   const now = new Date();
-  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-  const existingIds = new Set(state.transactions.map((item) => `${item.category}-${item.description}-${item.date}`));
-  let added = 0;
-  
-  state.fixedExpenses.filter((item) => item.active).forEach((fixed) => {
-    // Verificar se é gasto variável e se já expirou
-    if (fixed.type === 'variable' && fixed.startMonth && fixed.duration) {
-      const startDate = new Date(fixed.startMonth + '-01');
-      const endDate = new Date(startDate.getFullYear(), startDate.getMonth() + fixed.duration, 0);
-      if (now > endDate) {
-        return; // Gasto já expirou, não lançar
-      }
-    }
-    
-    const date = new Date(now.getFullYear(), now.getMonth(), fixed.day).toISOString().slice(0, 10);
-    const key = `${fixed.category}-${fixed.description}-${date}`;
-    if (!existingIds.has(key)) {
-      state.transactions.push({ id: createId(), date, category: fixed.category, subcategory: fixed.description, type: 'expense', description: fixed.description, value: fixed.value, payment: 'Débito', status: 'paid' });
-      existingIds.add(key);
-      added += 1;
-    }
-  });
+  const occurrences = createMissingFixedExpenseOccurrences(
+    state.fixedExpenses,
+    state.transactions,
+    now,
+    createId
+  );
+  state.transactions.push(...occurrences);
   
   saveState();
   renderTransactionTable();
   renderDashboard();
   renderReportPage();
   updateRawEditor();
-  showToast(`${added} gastos lançados para o mês atual.`, 'success');
+  showToast(`${occurrences.length} gastos lançados para o mês atual.`, 'success');
 }
 
 function exportReport(format) {
-  const year = dom.reportYear.value === 'all' ? new Date().getFullYear() : Number(dom.reportYear.value);
-  const filteredTransactions = state.transactions.filter((item) => new Date(item.date).getFullYear() === year);
+  const year = dom.reportYear.value === 'all' ? null : Number(dom.reportYear.value);
+  const filteredTransactions = state.transactions.filter((item) => periodMatches(item.date, year));
   
   if (filteredTransactions.length === 0) {
     showToast('Nenhuma transação encontrada para este período.', 'warning');
@@ -3893,12 +5245,7 @@ function clearAllTransactions() {
 }
 
 function backupData() {
-  const dataStr = JSON.stringify(state, null, 2);
-  const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = 'LuminaFin-backup.json';
-  link.click();
+  downloadBackupSnapshot(JSON.parse(JSON.stringify(state)), 'LuminaFin-backup.json');
   showToast('Backup exportado com sucesso.', 'success');
 }
 
@@ -3925,27 +5272,11 @@ function applyRawJson() {
   try {
     const parsed = JSON.parse(dom.rawDataEditor.value);
     if (!parsed || typeof parsed !== 'object') throw new Error('JSON inválido');
-    state = {
-      settings: parsed.settings || defaultSettings,
-      categories: Array.isArray(parsed.categories) ? parsed.categories : defaultCategories,
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
-      fixedExpenses: Array.isArray(parsed.fixedExpenses) ? parsed.fixedExpenses : [],
-      deletedItems: Array.isArray(parsed.deletedItems) ? parsed.deletedItems : [],
-      sort: parsed.sort || state.sort,
-      pagination: parsed.pagination || state.pagination,
-      filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all', ...(parsed.filters || state.filters) },
-      reportYear: parsed.reportYear || state.reportYear,
-      goals: Array.isArray(parsed.goals) ? parsed.goals : []
-    };
-    
-    // Migrar dados antigos de gastos fixos
-    state.fixedExpenses = state.fixedExpenses.map((item) => ({
-      ...item,
-      type: item.type || 'fixed',
-      duration: item.duration || null,
-      startMonth: item.startMonth || null
-    }));
-    
+    const candidate = migrateState(parsed.state || parsed);
+    const issues = validateStateShape(candidate);
+    if (issues.length > 0) throw new Error(issues.slice(0, 3).join('; '));
+    performAutomaticBackup();
+    state = candidate;
     saveState();
     applyTheme();
     populateSelects();
@@ -3955,10 +5286,11 @@ function applyRawJson() {
     renderFixedTable();
     renderReportPage();
     renderLimitsTable();
+    updateRawEditor();
     showToast('JSON aplicado com sucesso.', 'success');
   } catch (error) {
     console.error(error);
-    showToast('Erro ao aplicar JSON. Verifique a sintaxe.', 'error');
+    showToast(`JSON não aplicado: ${error.message}`, 'error');
   }
 }
 
@@ -4011,26 +5343,54 @@ function clearFixedExpenses() {
 
 // ==================== NOVAS FUNCIONALIDADES: CENÁRIOS, METAS E ANÁLISE DE RISCO ====================
 
-// Estado para cenários salvos e metas
-let scenarios = JSON.parse(localStorage.getItem('luminafin_scenarios') || '[]');
-let savingsGoals = JSON.parse(localStorage.getItem('luminafin_goals') || '[]');
-
 // Sistema de abas nos relatórios
 function initReportTabs() {
   const tabButtons = document.querySelectorAll('.tab-button');
   const tabContents = document.querySelectorAll('.tab-content');
+  tabButtons[0]?.parentElement?.setAttribute('role', 'tablist');
+  tabButtons.forEach((button, index) => {
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+    button.tabIndex = index === 0 ? 0 : -1;
+    const tabId = button.dataset.tab;
+    button.setAttribute('aria-controls', `${tabId}-tab`);
+  });
+  tabContents.forEach((content, index) => {
+    content.setAttribute('role', 'tabpanel');
+    content.setAttribute('aria-hidden', index === 0 ? 'false' : 'true');
+    content.tabIndex = 0;
+  });
 
   tabButtons.forEach(button => {
     button.addEventListener('click', () => {
-      // Remove active class from all buttons and contents
-      tabButtons.forEach(btn => btn.classList.remove('active'));
-      tabContents.forEach(content => content.classList.remove('active'));
-
-      // Add active class to clicked button and corresponding content
-      button.classList.add('active');
-      const tabId = button.dataset.tab;
-      document.getElementById(`${tabId}-tab`).classList.add('active');
+      selectReportTab(button, tabButtons, tabContents);
     });
+    button.addEventListener('keydown', (event) => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      const currentIndex = Array.from(tabButtons).indexOf(button);
+      const nextIndex = event.key === 'Home' ? 0
+        : event.key === 'End' ? tabButtons.length - 1
+          : (currentIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabButtons.length) % tabButtons.length;
+      const next = tabButtons[nextIndex];
+      selectReportTab(next, tabButtons, tabContents);
+      next.focus();
+    });
+  });
+}
+
+function selectReportTab(button, tabButtons, tabContents) {
+  const selectedTabId = button.dataset.tab;
+  tabButtons.forEach((tab) => {
+    const selected = tab === button;
+    tab.classList.toggle('active', selected);
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  tabContents.forEach((panel) => {
+    const selected = panel.id === `${selectedTabId}-tab`;
+    panel.classList.toggle('active', selected);
+    panel.setAttribute('aria-hidden', String(!selected));
   });
 }
 
@@ -4039,18 +5399,18 @@ function renderSavedScenarios() {
   const container = dom.savedScenarios;
   if (!container) return;
 
-  if (scenarios.length === 0) {
+  if (state.scenarios.length === 0) {
     container.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 2rem;">Nenhum cenário salvo ainda.</div>';
     return;
   }
 
-  container.innerHTML = scenarios.map((scenario, index) => `
+  container.innerHTML = state.scenarios.map((scenario, index) => `
     <div class="scenario-item">
-      <h5>${scenario.name}</h5>
-      <p>${scenario.description}</p>
+      <h5>${sanitizeHtml(scenario.name)}</h5>
+      <p>${sanitizeHtml(scenario.description)}</p>
       <div class="scenario-actions">
-        <button class="secondary-button" onclick="loadScenario(${index})">Carregar</button>
-        <button class="danger-button" onclick="deleteScenario(${index})">Excluir</button>
+        <button type="button" class="secondary-button" data-action="load-scenario" data-index="${index}">Carregar</button>
+        <button type="button" class="danger-button" data-action="delete-scenario" data-index="${index}">Excluir</button>
       </div>
     </div>
   `).join('');
@@ -4078,8 +5438,8 @@ function saveCurrentScenario() {
     }
   };
 
-  scenarios.push(scenario);
-  localStorage.setItem('luminafin_scenarios', JSON.stringify(scenarios));
+  state.scenarios.push(scenario);
+  saveState();
 
   dom.scenarioName.value = '';
   dom.scenarioDescription.value = '';
@@ -4090,40 +5450,44 @@ function saveCurrentScenario() {
 
 // Carregar cenário
 function loadScenario(index) {
-  const scenario = scenarios[index];
+  const scenario = state.scenarios[index];
   if (!scenario) return;
 
-  // Confirmar carregamento
-  if (!confirm(`Carregar cenário "${scenario.name}"? Isso substituirá os dados atuais.`)) {
-    return;
-  }
-
-  // Aplicar dados do cenário
-  state.transactions = [...scenario.data.transactions];
-  state.fixedExpenses = [...scenario.data.fixedExpenses];
-  state.categories = [...scenario.data.categories];
-  state.settings = { ...scenario.data.settings };
-
-  saveState();
-  applyTheme();
-  rebuildCategoryDropdowns();
-  renderDashboard();
-  renderTransactionTable();
-  renderCategoryTable();
-  renderFixedTable();
-  renderReportPage();
-
-  showToast(`Cenário "${scenario.name}" carregado!`, 'success');
+  showDangerConfirmModal(
+    'Carregar cenário',
+    `Carregar o cenário "${sanitizeHtml(scenario.name)}" substituirá os dados atuais.`,
+    'CARREGAR',
+    () => {
+      state.transactions = [...scenario.data.transactions];
+      state.fixedExpenses = [...scenario.data.fixedExpenses];
+      state.categories = [...scenario.data.categories];
+      state.settings = { ...scenario.data.settings };
+      saveState();
+      applyTheme();
+      rebuildCategoryDropdowns();
+      renderDashboard();
+      renderTransactionTable();
+      renderCategoryTable();
+      renderFixedTable();
+      renderReportPage();
+      showToast(`Cenário "${sanitizeHtml(scenario.name)}" carregado!`, 'success');
+    }
+  );
 }
 
 // Excluir cenário
 function deleteScenario(index) {
-  if (!confirm('Excluir este cenário permanentemente?')) return;
-
-  scenarios.splice(index, 1);
-  localStorage.setItem('luminafin_scenarios', JSON.stringify(scenarios));
-  renderSavedScenarios();
-  showToast('Cenário excluído.', 'success');
+  showDangerConfirmModal(
+    'Excluir cenário',
+    'Excluir este cenário permanentemente?',
+    'EXCLUIR',
+    () => {
+      state.scenarios.splice(index, 1);
+      saveState();
+      renderSavedScenarios();
+      showToast('Cenário excluído.', 'success');
+    }
+  );
 }
 
 // Sistema de metas de poupança
@@ -4144,8 +5508,8 @@ function setSavingsGoal() {
     currentProgress: 0
   };
 
-  savingsGoals = [goal]; // Apenas uma meta ativa por vez
-  localStorage.setItem('luminafin_goals', JSON.stringify(savingsGoals));
+  state.savingsGoals = [goal];
+  saveState();
 
   dom.monthlySavingsGoal.value = '';
   dom.goalDeadline.value = 12;
@@ -4158,12 +5522,12 @@ function renderSavingsGoalProgress() {
   const container = dom.savingsGoalProgress;
   if (!container) return;
 
-  if (savingsGoals.length === 0) {
+  if (state.savingsGoals.length === 0) {
     container.innerHTML = '<div style="text-align: center; color: var(--muted); padding: 2rem;">Nenhuma meta definida.</div>';
     return;
   }
 
-  const goal = savingsGoals[0];
+  const goal = state.savingsGoals[0];
   const monthsElapsed = Math.floor((new Date() - new Date(goal.startDate)) / (1000 * 60 * 60 * 24 * 30));
   const targetAmount = goal.monthlyGoal * goal.deadline;
   const currentSavings = calculateCurrentSavings();
@@ -4388,32 +5752,58 @@ function checkSmartAlerts() {
   // Verificar limites de categoria ultrapassados
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
+  let recordedBudgetAlert = false;
 
   state.categories.forEach(category => {
-    if (category.limit > 0) {
-      const spent = state.transactions
-        .filter(t => t.type === 'expense' && t.category === category.id &&
-                new Date(t.date).getFullYear() === currentYear &&
-                new Date(t.date).getMonth() + 1 === currentMonth)
-        .reduce((sum, t) => sum + t.value, 0);
+    const limitCents = Number.isSafeInteger(category.limitCents)
+      ? category.limitCents
+      : toCents(category.limit || 0);
+    if (limitCents > 0) {
+      const spentCents = state.transactions
+        .filter(t => t.type === 'expense'
+          && t.status === 'paid'
+          && t.category === category.id
+          && periodMatches(t.date, currentYear, currentMonth))
+        .reduce((sum, t) => sum + (
+          Number.isSafeInteger(t.valueCents) ? t.valueCents : toCents(t.value)
+        ), 0);
 
-      const usagePercent = (spent / category.limit) * 100;
+      const usagePercent = (spentCents / limitCents) * 100;
+      const level = usagePercent >= 100 ? 'exceeded' : usagePercent >= state.settings.notifyOnLimitReached ? 'near' : null;
+      const alertId = level ? `in-app-budget:${currentYear}-${String(currentMonth).padStart(2, '0')}:${category.id}:${level}` : null;
+      if (alertId && state.notifications.some((item) => item.id === alertId)) return;
 
-      if (usagePercent >= 100) {
+      if (level === 'exceeded') {
         alerts.push({
           type: 'danger',
           message: `Limite da categoria "${category.name}" ultrapassado (${usagePercent.toFixed(0)}%).`,
           icon: '🚨'
         });
-      } else if (usagePercent >= state.settings.notifyOnLimitReached) {
+      } else if (level === 'near') {
         alerts.push({
           type: 'warning',
           message: `Categoria "${category.name}" atingiu ${usagePercent.toFixed(0)}% do limite.`,
           icon: '⚠️'
         });
       }
+      if (alertId) {
+        const timestamp = new Date().toISOString();
+        state.notifications.push({
+          id: alertId,
+          type: 'budget-limit-in-app',
+          categoryId: category.id,
+          period: `${currentYear}-${String(currentMonth).padStart(2, '0')}`,
+          level,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          deletedAt: null,
+          version: 1
+        });
+        recordedBudgetAlert = true;
+      }
     }
   });
+  if (recordedBudgetAlert) saveState();
 
   // Verificar baixo saldo
   const currentBalance = calculateCurrentBalance();
@@ -4447,11 +5837,18 @@ function displayAlerts(alerts) {
     setTimeout(() => {
       const alertElement = document.createElement('div');
       alertElement.className = `alert-banner alert-${alert.type}`;
-      alertElement.innerHTML = `
-        <i class="fa-solid fa-exclamation-triangle"></i>
-        <span>${alert.icon} ${alert.message}</span>
-        <button onclick="this.parentElement.remove()" style="background: none; border: none; color: inherit; cursor: pointer; margin-left: auto;">×</button>
-      `;
+      const icon = document.createElement('i');
+      icon.className = 'fa-solid fa-exclamation-triangle';
+      icon.setAttribute('aria-hidden', 'true');
+      const message = document.createElement('span');
+      message.textContent = `${alert.icon} ${alert.message}`;
+      const dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.className = 'alert-dismiss';
+      dismiss.setAttribute('aria-label', 'Dispensar alerta');
+      dismiss.textContent = '×';
+      dismiss.addEventListener('click', () => alertElement.remove());
+      alertElement.append(icon, message, dismiss);
 
       alertsContainer.appendChild(alertElement);
 
@@ -4562,7 +5959,6 @@ function renderTrendAnalysis() {
     const volatilityColor = volatility > lastBalance ? '#ef4444' : volatility > lastBalance * 0.5 ? '#f59e0b' : '#22c55e';
     const negativeWarning = negativeMonth ? `Em ${negativeMonth} mês(es)` : 'Não identificado';
     const negativeColor = negativeMonth ? '#ef4444' : '#22c55e';
-    const pairsCount = Math.floor(historicalData.length / 2);
     const firstHalf = historicalData.length > 0 ? historicalData[0].balance : 0;
     const secondHalf = historicalData.length > Math.floor(historicalData.length / 2) ? historicalData[Math.floor(historicalData.length / 2)].balance : 0;
     const isAccelerating = (lastBalance - secondHalf) > (secondHalf - firstHalf);
@@ -4632,26 +6028,36 @@ function renderTrendAnalysis() {
 // Funções auxiliares para cálculos
 function calculateAverageMonthlyIncome() {
   const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
   const monthlyIncomes = [];
-
-  for (let month = 1; month <= 12; month++) {
-    const income = sumByPeriod(currentYear, month, 'income');
-    if (income > 0) monthlyIncomes.push(income);
+  for (let index = 0; index < 12; index += 1) {
+    let month = currentMonth - index;
+    let year = currentYear;
+    if (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+    monthlyIncomes.push(sumByPeriod(year, month, 'income'));
   }
 
-  return monthlyIncomes.length > 0 ? monthlyIncomes.reduce((a, b) => a + b, 0) / monthlyIncomes.length : 0;
+  return monthlyIncomes.reduce((sum, item) => sum + item, 0) / monthlyIncomes.length;
 }
 
 function calculateAverageMonthlyExpense() {
   const currentYear = new Date().getFullYear();
+  const currentMonth = new Date().getMonth() + 1;
   const monthlyExpenses = [];
-
-  for (let month = 1; month <= 12; month++) {
-    const expense = sumByPeriod(currentYear, month, 'expense');
-    if (expense > 0) monthlyExpenses.push(expense);
+  for (let index = 0; index < 12; index += 1) {
+    let month = currentMonth - index;
+    let year = currentYear;
+    if (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+    monthlyExpenses.push(sumByPeriod(year, month, 'expense'));
   }
 
-  return monthlyExpenses.length > 0 ? monthlyExpenses.reduce((a, b) => a + b, 0) / monthlyExpenses.length : 0;
+  return monthlyExpenses.reduce((sum, item) => sum + item, 0) / monthlyExpenses.length;
 }
 
 function calculateMonthlyBalance(year, month) {
@@ -4722,7 +6128,7 @@ function initNewFeatures() {
 
 // ==================== GOALS FUNCTIONS ====================
 function renderGoals() {
-  const balance = parseFloat(dom.cardBalance.textContent.replace(/[^\d,-]/g, '').replace(',', '.')) || 0;
+  const balanceCents = calculateCurrentBalance();
   const container = dom.goalsContainer;
   container.innerHTML = '';
 
@@ -4732,29 +6138,31 @@ function renderGoals() {
   }
 
   state.goals.forEach((goal, index) => {
-    const progress = Math.min((balance / goal.targetValue) * 100, 100);
-    const currentValue = Math.min(balance, goal.targetValue);
+    const targetCents = Number.isSafeInteger(goal.targetCents) ? goal.targetCents : toCents(goal.targetValue);
+    const progress = targetCents > 0 ? Math.max(0, Math.min((balanceCents / targetCents) * 100, 100)) : 0;
+    const currentValueCents = Math.max(0, Math.min(balanceCents, targetCents));
+    const safeColor = /^#[0-9a-f]{6}$/i.test(goal.color || '') ? goal.color : '#38bdf8';
 
     const goalElement = document.createElement('div');
     goalElement.className = 'goal-item';
     goalElement.innerHTML = `
       <div class="goal-header">
-        <h5 class="goal-title">${goal.name}</h5>
+        <h5 class="goal-title">${sanitizeHtml(goal.name)}</h5>
         <div class="goal-actions">
-          <button class="edit-goal" data-index="${index}" title="Editar meta">
+          <button class="edit-goal" data-index="${index}" title="Editar meta" aria-label="Editar meta ${sanitizeHtml(goal.name)}">
             <i class="fa-solid fa-edit"></i>
           </button>
-          <button class="delete-goal" data-index="${index}" title="Excluir meta">
+          <button class="delete-goal" data-index="${index}" title="Excluir meta" aria-label="Excluir meta ${sanitizeHtml(goal.name)}">
             <i class="fa-solid fa-trash"></i>
           </button>
         </div>
       </div>
       <div class="goal-progress-bar">
-        <div class="goal-progress-fill" style="width: ${progress}%; background-color: ${goal.color};"></div>
+        <div class="goal-progress-fill" style="width: ${progress}%; background-color: ${safeColor};"></div>
       </div>
       <div class="goal-progress-text">
-        <span>${formatCurrency(currentValue)}</span>
-        <span>${formatCurrency(goal.targetValue)}</span>
+        <span>${formatCurrencyFromCents(currentValueCents)}</span>
+        <span>${formatCurrencyFromCents(targetCents)}</span>
       </div>
     `;
 
@@ -4779,10 +6187,14 @@ function renderGoals() {
 
 function openGoalModal(goal = null, index = -1) {
   const modal = dom.goalModal;
-  modal.classList.add('active');
+  activateModal(modal);
   dom.goalModalTitle.textContent = goal ? 'Editar Meta' : 'Nova Meta';
   dom.goalName.value = goal ? goal.name : '';
-  dom.goalTarget.value = goal ? goal.targetValue : '';
+  dom.goalTarget.value = goal
+    ? (convertBaseCentsToInputValue(
+      Number.isSafeInteger(goal.targetCents) ? goal.targetCents : toCents(goal.targetValue)
+    ) ?? '')
+    : '';
   dom.goalColor.value = goal ? goal.color : '#38bdf8';
 
   dom.goalForm.dataset.editIndex = index;
@@ -4793,22 +6205,35 @@ function saveGoal() {
   const targetValue = parseFloat(dom.goalTarget.value);
   const color = dom.goalColor.value;
 
-  if (!name || !targetValue || targetValue <= 0) {
+  if (!name || name.length > 100 || !Number.isFinite(targetValue) || targetValue <= 0
+    || !/^#[0-9a-f]{6}$/i.test(color)) {
     showToast('Preencha todos os campos corretamente.', 'error');
     return;
   }
 
+  const targetCents = convertInputAmountToBaseCents(targetValue);
+  if (!Number.isSafeInteger(targetCents) || targetCents <= 0) {
+    showToast(`Cadastre uma taxa de câmbio válida para ${state.settings.currency}.`, 'error');
+    return;
+  }
+  const editIndex = parseInt(dom.goalForm.dataset.editIndex);
+  const existing = editIndex >= 0 ? state.goals[editIndex] : null;
+  const timestamp = new Date().toISOString();
   const goal = {
-    id: Date.now(),
+    ...(existing || {}),
+    id: existing?.id || createId(),
     name,
-    targetValue,
+    targetCents,
+    targetValue: fromCents(targetCents),
     color,
-    visible: true
+    visible: true,
+    createdAt: existing?.createdAt || timestamp,
+    updatedAt: timestamp,
+    deletedAt: null,
+    version: (existing?.version || 0) + 1
   };
 
-  const editIndex = parseInt(dom.goalForm.dataset.editIndex);
   if (editIndex >= 0) {
-    goal.id = state.goals[editIndex].id;
     state.goals[editIndex] = goal;
   } else {
     state.goals.push(goal);
@@ -4816,7 +6241,7 @@ function saveGoal() {
 
   saveState();
   renderGoals();
-  dom.goalModal.classList.remove('active');
+  closeModals();
   showToast(`Meta "${name}" ${editIndex >= 0 ? 'atualizada' : 'criada'} com sucesso!`, 'success');
 }
 
@@ -4829,12 +6254,17 @@ function editGoal(index) {
 
 function deleteGoal(index) {
   const goal = state.goals[index];
-  if (confirm(`Tem certeza que deseja excluir a meta "${goal.name}"?`)) {
-    state.goals.splice(index, 1);
-    saveState();
-    renderGoals();
-    showToast('Meta excluída com sucesso.', 'success');
-  }
+  showDangerConfirmModal(
+    'Excluir meta',
+    `Deseja excluir a meta "${sanitizeHtml(goal.name)}"?`,
+    'EXCLUIR',
+    () => {
+      state.goals.splice(index, 1);
+      saveState();
+      renderGoals();
+      showToast('Meta excluída com sucesso.', 'success');
+    }
+  );
 }
 
 window.addEventListener('DOMContentLoaded', () => {
