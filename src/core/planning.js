@@ -1,12 +1,43 @@
 import {
+  calculateAccountBalanceAt,
   calculatePeriodTotals,
   calculateUnsettledPeriodTotals
 } from './finance.js';
 import { isFixedExpenseActiveInMonth } from './fixed-expenses.js';
-import { calculateCofferBalance } from './coffers.js';
+import { calculateCofferBalance, calculateCofferBalances } from './coffers.js';
 
-export function summarizeMonthlyBudget({ transactions, fixedExpenses, year, month }) {
+export function summarizeFinancialPosition({
+  transactions,
+  initialBalances,
+  coffers,
+  throughDate = null
+}) {
+  if (!Array.isArray(transactions) || !Array.isArray(initialBalances) || !Array.isArray(coffers)) {
+    throw new TypeError('Lançamentos, saldos iniciais e cofrinhos válidos são obrigatórios.');
+  }
+  const accountCents = calculateAccountBalanceAt(transactions, initialBalances, throughDate);
+  const cofferBalances = calculateCofferBalances(coffers, transactions, throughDate);
+  const principalCents = cofferBalances.reduce((sum, item) => sum + item.principalCents, 0);
+  const yieldCents = cofferBalances.reduce((sum, item) => sum + item.yieldCents, 0);
+  const cofferCents = principalCents + yieldCents;
+  return {
+    accountCents,
+    principalCents,
+    yieldCents,
+    cofferCents,
+    netWorthCents: accountCents + cofferCents
+  };
+}
+
+export function summarizeMonthlyBudget({
+  transactions,
+  fixedExpenses,
+  creditInstallments = [],
+  year,
+  month
+}) {
   if (!Array.isArray(transactions) || !Array.isArray(fixedExpenses)
+    || !Array.isArray(creditInstallments)
     || !Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
     throw new TypeError('Lançamentos, gastos fixos e período válido são obrigatórios.');
   }
@@ -27,10 +58,24 @@ export function summarizeMonthlyBudget({ transactions, fixedExpenses, year, mont
         : Math.round((Number(expense.value) || 0) * 100)
     ), 0);
 
+  const creditInvoiceCents = creditInstallments
+    .filter((item) => item.invoiceMonth === sourceMonth)
+    .reduce((sum, item) => sum + Math.max(0, item.amountCents - item.paidCents), 0);
+  const creditItemsThisMonth = creditInstallments.filter((item) => item.invoiceMonth === sourceMonth);
+  const installmentCreditCents = creditItemsThisMonth
+    .filter((item) => item.installmentCount > 1)
+    .reduce((sum, item) => sum + Math.max(0, item.amountCents - item.paidCents), 0);
+  const singlePaymentCreditCents = creditInvoiceCents - installmentCreditCents;
+  const nextMonthDate = new Date(year, month, 1);
+  const nextSourceMonth = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`;
+  const nextCreditInvoiceCents = creditInstallments
+    .filter((item) => item.invoiceMonth === nextSourceMonth)
+    .reduce((sum, item) => sum + Math.max(0, item.amountCents - item.paidCents), 0);
   const committedExpenseCents = realized.expenseCents
     + unsettled.pendingExpenseCents
     + unsettled.scheduledExpenseCents
-    + ungeneratedFixedExpenseCents;
+    + ungeneratedFixedExpenseCents
+    + creditInvoiceCents;
   return {
     paidIncomeCents: realized.incomeCents,
     paidExpenseCents: realized.expenseCents,
@@ -39,6 +84,11 @@ export function summarizeMonthlyBudget({ transactions, fixedExpenses, year, mont
     scheduledIncomeCents: unsettled.scheduledIncomeCents,
     scheduledExpenseCents: unsettled.scheduledExpenseCents,
     ungeneratedFixedExpenseCents,
+    creditInvoiceCents,
+    installmentCreditCents,
+    singlePaymentCreditCents,
+    nextCreditInvoiceCents,
+    creditInvoiceTrendCents: nextCreditInvoiceCents - creditInvoiceCents,
     committedExpenseCents,
     safeRemainingCents: realized.incomeCents - committedExpenseCents,
     expectedRemainingCents: realized.incomeCents
@@ -57,7 +107,7 @@ export function suggestCofferWithdrawals({ coffers, transactions, shortfallCents
     .map((coffer) => {
       const balance = calculateCofferBalance(coffer, transactions);
       if (balance.totalCents <= 0) return null;
-      const losesYield = coffer.allowWithdrawalWithoutYieldLoss !== true
+      const losesYield = coffer.allowWithdrawalWithoutYieldLoss !== true;
       let grossWithdrawalCents = shortfallCents;
       if (losesYield && balance.principalCents > 0) {
         grossWithdrawalCents = Number((BigInt(shortfallCents) * BigInt(balance.totalCents)
@@ -88,13 +138,35 @@ export function suggestCofferWithdrawals({ coffers, transactions, shortfallCents
       || left.grossWithdrawalCents - right.grossWithdrawalCents);
 }
 
+export function estimateCofferMonthlyYieldCents(coffers, transactions, settings = {}) {
+  if (!Array.isArray(coffers) || !Array.isArray(transactions)) {
+    throw new TypeError('Cofrinhos e lançamentos válidos são obrigatórios.');
+  }
+  const cdiAnnual = (settings.annualCdiBps || 0) / 10000;
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return coffers.reduce((sum, coffer) => {
+    if (coffer.active === false) return sum;
+    const balance = calculateCofferBalance(coffer, transactions);
+    if (balance.totalCents <= 0) return sum;
+    let monthlyRate = Number.isSafeInteger(coffer.monthlyRateBps)
+      ? coffer.monthlyRateBps / 10000
+      : cdiAnnual * (Number.isSafeInteger(coffer.bonusCdiBps) ? coffer.bonusCdiBps : 10000) / 10000 / 12;
+    if (coffer.promoEndDate && todayKey > coffer.promoEndDate && coffer.promoAfter === 'excess') {
+      monthlyRate = cdiAnnual * (coffer.excessCdiBps || 10000) / 10000 / 12;
+    }
+    return sum + Math.max(0, Math.round(balance.totalCents * monthlyRate));
+  }, 0);
+}
+
 export function evaluatePurchaseDecision({
   amountCents,
   installments,
   accountBalanceCents,
   monthlyPosition,
   coffers,
-  transactions
+  transactions,
+  cofferSettings = {}
 }) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0
     || !Number.isInteger(installments) || installments < 1
@@ -113,6 +185,7 @@ export function evaluatePurchaseDecision({
     - monthlyPosition.pendingExpenseCents
     - monthlyPosition.scheduledExpenseCents
     - monthlyPosition.ungeneratedFixedExpenseCents
+    - (monthlyPosition.creditInvoiceCents || 0)
     - estimatedExpenseCents
     - installmentCents;
   const monthEndAccountAfterPurchaseCents = safeMonthEndAccountAfterPurchaseCents
@@ -131,6 +204,10 @@ export function evaluatePurchaseDecision({
   });
   const comfortMarginCents = Math.max(5000, Math.round(monthlyPosition.paidIncomeCents * 0.1));
   const suggestedCoffer = cofferOptions.find((option) => option.coversShortfall) || null;
+  const reserveCents = coffers.reduce((sum, coffer) => (
+    coffer.active === false ? sum : sum + calculateCofferBalance(coffer, transactions).totalCents
+  ), 0);
+  const reserveMonthlyYieldCents = estimateCofferMonthlyYieldCents(coffers, transactions, cofferSettings);
 
   let verdict;
   if (cashShortfallCents > 0 && !suggestedCoffer) verdict = 'not-affordable';
@@ -148,6 +225,13 @@ export function evaluatePurchaseDecision({
     safeRemainingAfterPurchaseCents,
     cashShortfallCents,
     cofferOptions,
+    reserveCents,
+    reserveMonthlyYieldCents,
+    immediateCapacityCents: Math.max(0, accountBalanceCents
+      - monthlyPosition.pendingExpenseCents
+      - monthlyPosition.scheduledExpenseCents
+      - monthlyPosition.creditInvoiceCents),
+    reserveCoverageCents: suggestedCoffer?.netReceivedCents || 0,
     suggestedCoffer,
     verdict
   };

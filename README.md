@@ -29,9 +29,13 @@ Organizador financeiro pessoal executado no navegador. Os dados ficam no `localS
 
 ## Dados, backup e compatibilidade
 
-O estado é persistido em `LuminaFin-v1`, com schema atual versão 3. A migração é executada automaticamente e preserva dados legados, incluindo saldos iniciais antigos, cenários e metas salvos em chaves separadas.
+O estado é persistido em `LuminaFin-v1`, com schema atual versão 5. A migração é executada automaticamente e preserva dados legados, incluindo saldos iniciais antigos, cenários e metas salvos em chaves separadas.
 
-Exportar um backup baixa um JSON versionado com o estado completo. Importações e alterações pelo editor JSON são validadas antes da substituição e criam um backup do estado anterior. Uma importação inválida não substitui os dados atuais. A lixeira permite restaurar itens removidos.
+Backups JSON permitem escolher os módulos incluídos; todos vêm selecionados por padrão. A restauração substitui somente os módulos marcados e valida o estado resultante, preservando outros módulos e seus vínculos. Antes de importar ou aplicar JSON, o estado atual é baixado como backup. Backups antigos sem metadados de módulos continuam sendo tratados como completos. Um lembrete local aparece se nunca foi feito backup, se ele tem 30 dias ou se houve alterações depois do último backup; pode ser adiado por 7 ou 30 dias.
+
+## Versão e publicação
+
+O workflow `.github/workflows/pages.yml` executa os testes, gera o site em `dist/` e publica no GitHub Pages em cada atualização de `main`/`master` ou release publicado. O build inclui `version.json` com a versão do `package.json`, o commit e a data do build; o rodapé atualiza esse valor quando há rede e mantém uma indicação local/offline como fallback. Para ativar a publicação, selecione **GitHub Actions** como fonte do GitHub Pages nas configurações do repositório.
 
 ## Executar localmente
 
@@ -55,4 +59,4 @@ npm run check
 npm run build
 ```
 
-O build gera os ícones PNG e copia a aplicação e seus módulos para `dist/`.
+O build gera os ícones PNG, os metadados `version.json` e copia a aplicação e seus módulos para `dist/`.

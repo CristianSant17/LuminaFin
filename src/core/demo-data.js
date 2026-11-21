@@ -11,7 +11,8 @@ export function createDemoState(currentState = {}) {
   state.settings = {
     ...(currentState.settings || state.settings),
     themeMode: currentState.settings?.themeMode || 'dark',
-    currency: 'BRL'
+    currency: 'BRL',
+    demoMode: true
   };
   const demoCategories = [
     { id: 'moradia', name: 'Moradia', type: 'expense', icon: '🏠', subcategories: ['Contas', 'Residência'], limitCents: 200000, preset: true },

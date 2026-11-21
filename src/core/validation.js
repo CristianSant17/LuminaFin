@@ -208,6 +208,10 @@ export function validateStateShape(state) {
 
   for (const transaction of Array.isArray(state.transactions) ? state.transactions : []) {
     if (!validDate(transaction?.date)) issues.push(`Data inválida na transação ${transaction?.id || ''}`);
+    if (transaction?.description !== undefined
+      && (typeof transaction.description !== 'string' || transaction.description.length > 200)) {
+      issues.push(`Descrição inválida na transação ${transaction?.id || ''}`);
+    }
     if (!['income', 'expense', 'transfer'].includes(transaction?.type)) {
       issues.push(`Tipo inválido na transação ${transaction?.id || ''}`);
     }

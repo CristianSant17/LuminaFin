@@ -14,6 +14,11 @@ function monthKey(year, month) {
   return `${year}-${String(month).padStart(2, '0')}`;
 }
 
+function nextMonth(month) {
+  const { year, month: monthNumber } = monthParts(month);
+  return monthNumber === 12 ? monthKey(year + 1, 1) : monthKey(year, monthNumber + 1);
+}
+
 export function getCreditInvoiceMonth(purchaseDate, closingDay) {
   const date = normalizeDate(purchaseDate);
   if (!date || !Number.isInteger(closingDay) || closingDay < 1 || closingDay > 31) {
@@ -29,6 +34,32 @@ export function getCreditInvoiceMonth(purchaseDate, closingDay) {
     }
   }
   return monthKey(year, month);
+}
+
+export function getCreditInvoiceCycles(card, installments, asOfDate) {
+  if (!card || !Array.isArray(installments) || !normalizeDate(asOfDate)) {
+    throw new TypeError('Cartão, parcelas e data de referência válidos são obrigatórios.');
+  }
+  const referenceDate = normalizeDate(asOfDate);
+  const currentMonth = monthKey(referenceDate.getFullYear(), referenceDate.getMonth() + 1);
+  const upcomingMonth = nextMonth(currentMonth);
+  const summarize = (invoiceMonth) => {
+    const dates = getCreditInvoiceDates(invoiceMonth, card.closingDay, card.dueDay);
+    const items = installments
+      .filter((item) => item.cardId === card.id && item.invoiceMonth === invoiceMonth)
+      .map((item) => ({ ...item, remainingCents: Math.max(0, item.amountCents - item.paidCents) }));
+    return {
+      cardId: card.id,
+      invoiceMonth,
+      ...dates,
+      items,
+      totalCents: items.reduce((sum, item) => sum + item.remainingCents, 0)
+    };
+  };
+  return {
+    current: summarize(currentMonth),
+    upcoming: summarize(upcomingMonth)
+  };
 }
 
 export function getCreditInvoiceDates(invoiceMonth, closingDay, dueDay) {
@@ -158,4 +189,10 @@ export function summarizeCreditInvoice(invoice, installments, asOfDate) {
     ? 'paid'
     : asOfDate > invoice.closingDate ? 'closed' : 'open';
   return { ...invoice, totalCents, paidCents, remainingCents, status };
+}
+
+export function filterCreditInvoices(invoices, cardId = '', invoiceMonth = '') {
+  if (!Array.isArray(invoices)) throw new TypeError('Lista de faturas válida é obrigatória.');
+  return invoices.filter((invoice) => (!cardId || invoice.cardId === cardId)
+    && (!invoiceMonth || invoice.invoiceMonth === invoiceMonth));
 }

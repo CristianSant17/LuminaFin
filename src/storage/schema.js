@@ -65,6 +65,9 @@ function normalizeTransaction(transaction, index) {
     valueCents,
     value: valueCents / 100,
     date: transaction.date || '',
+    description: typeof transaction.description === 'string'
+      ? transaction.description.slice(0, 200)
+      : '',
     status: ['paid', 'pending', 'scheduled'].includes(transaction.status)
       ? transaction.status
       : 'paid'
@@ -194,6 +197,7 @@ function normalizeSavingsGoal(goal, index) {
 export function createEmptyState() {
   return {
     schemaVersion: SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
     transactions: [],
     categories: [],
     fixedExpenses: [],
@@ -217,6 +221,8 @@ export function createEmptyState() {
     settings: {
       currency: 'BRL',
       baseCurrency: 'BRL',
+      interfaceMode: 'essential',
+      demoMode: false,
       theme: 'light',
       themeMode: 'dark',
       language: 'pt-BR',
@@ -328,6 +334,8 @@ export function migrateState(raw, sidecar = {}) {
     ...state.settings,
     ...(source.settings && typeof source.settings === 'object' ? source.settings : {})
   };
+  state.settings.interfaceMode = state.settings.interfaceMode === 'complete' ? 'complete' : 'essential';
+  state.settings.demoMode = state.settings.demoMode === true;
   const baseCurrency = state.settings.baseCurrency || 'BRL';
   const displayCurrency = state.settings.currency || baseCurrency;
   if (displayCurrency !== baseCurrency && !state.fxRates.some((item) => (
@@ -353,5 +361,8 @@ export function migrateState(raw, sidecar = {}) {
   };
   state.reportYear = source.reportYear ?? state.reportYear;
   state.schemaVersion = SCHEMA_VERSION;
+  state.updatedAt = typeof source.updatedAt === 'string' && !Number.isNaN(Date.parse(source.updatedAt))
+    ? source.updatedAt
+    : new Date().toISOString();
   return state;
 }

@@ -366,7 +366,7 @@ export function createCofferOperation({
   id,
   description,
   category = '',
-  settings = {}
+  _settings = {}
 }) {
   if (!coffer || !Array.isArray(coffers) || !Array.isArray(transactions)) {
     throw new TypeError('Cofrinho, lista de cofrinhos e lançamentos são obrigatórios.');
@@ -388,8 +388,6 @@ export function createCofferOperation({
   let type = 'transfer';
   let netAmountCents = amountCents;
   let yieldLossCents = 0;
-  const rules = normalizedSettings(settings);
-
   if (operation === 'opening') {
     principalDelta = amountCents;
   } else if (operation === 'deposit') {
