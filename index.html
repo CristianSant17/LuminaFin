@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js" defer></script>
-  <script src="script.js" defer></script>
+  <script type="module" src="script.js"></script>
 </head>
 <body class="theme-light">
   <div class="app-shell">
@@ -28,12 +28,15 @@
         </div>
       </div>
       <nav class="nav-menu" aria-label="Navegação principal" role="tablist">
-        <button class="nav-link active" role="tab" aria-selected="true" data-target="dashboard"><i class="fa-solid fa-house"></i> Dashboard</button>
-        <button class="nav-link" role="tab" aria-selected="false" data-target="transactions"><i class="fa-solid fa-file-invoice-dollar"></i> Lançamentos</button>
-        <button class="nav-link" role="tab" aria-selected="false" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
-        <button class="nav-link" role="tab" aria-selected="false" data-target="reports"><i class="fa-solid fa-chart-line"></i> Relatórios</button>
-        <button class="nav-link" role="tab" aria-selected="false" data-target="help"><i class="fa-solid fa-question-circle"></i> Tenho Dúvida</button>
-        <button class="nav-link" role="tab" aria-selected="false" data-target="admin"><i class="fa-solid fa-gear"></i> Administrativo</button>
+        <button class="nav-link active" role="tab" aria-selected="true" aria-controls="dashboard" data-target="dashboard"><i class="fa-solid fa-house"></i> Dashboard</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="transactions" data-target="transactions"><i class="fa-solid fa-file-invoice-dollar"></i> Lançamentos</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="categories" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="fixed" data-target="fixed"><i class="fa-solid fa-repeat"></i> Gastos Fixos</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="coffers" data-target="coffers"><i class="fa-solid fa-piggy-bank"></i> Cofrinhos</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="creditCards" data-target="creditCards"><i class="fa-solid fa-credit-card"></i> Cartões</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="reports" data-target="reports"><i class="fa-solid fa-chart-line"></i> Relatórios</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="help" data-target="help"><i class="fa-solid fa-question-circle"></i> Tenho Dúvida</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="admin" data-target="admin"><i class="fa-solid fa-gear"></i> Configurações</button>
       </nav>
       <div class="sidebar-footer">
         <div class="toggle-theme">
@@ -61,7 +64,7 @@
           <p class="subtitle">Visão completa das finanças pessoais e metas mensais</p>
         </div>
         <div class="topbar-actions">
-          <button class="secondary-button" id="openAddInitialBalance"><i class="fa-solid fa-wallet"></i> Saldo inicial</button>
+          <button class="secondary-button" id="openPurchaseChecker"><i class="fa-solid fa-calculator" aria-hidden="true"></i> Cabe no bolso?</button>
           <button class="primary-button" id="openAddTransaction"><i class="fa-solid fa-plus"></i> Novo lançamento</button>
         </div>
       </header>
@@ -83,9 +86,25 @@
               Mês
               <select id="dashboardMonth" aria-describedby="dashboardFilterSummary"></select>
             </label>
+            <button type="button" class="secondary-button" id="openAddInitialBalance"><i class="fa-solid fa-wallet" aria-hidden="true"></i> Saldo inicial</button>
           </div>
         </div>
-        <div class="goals-section">
+        <div class="dashboard-empty-state" id="dashboardEmptyState" hidden>
+          <div class="empty-state-mark" aria-hidden="true"><i class="fa-solid fa-book-open"></i></div>
+          <h3>Comece pelo seu dinheiro de hoje</h3>
+          <p>Registre um saldo inicial ou o primeiro lançamento. Cofrinhos e projeções podem ser configurados depois, sem misturar estimativas com seu saldo real.</p>
+          <div class="empty-state-actions">
+            <button type="button" class="primary-button" id="emptyAddTransaction"><i class="fa-solid fa-plus" aria-hidden="true"></i> Novo lançamento</button>
+            <button type="button" class="secondary-button" id="emptyAddInitialBalance"><i class="fa-solid fa-wallet" aria-hidden="true"></i> Informar saldo</button>
+            <button type="button" class="secondary-button" id="emptyOpenCoffers"><i class="fa-solid fa-piggy-bank" aria-hidden="true"></i> Conhecer cofrinhos</button>
+          </div>
+        </div>
+        <div class="chapter-tabs" role="tablist" aria-label="Capítulos do Dashboard" data-chapter-group="dashboard">
+          <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="summary">Resumo</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="indicators">Indicadores</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="trends">Tendências</button>
+        </div>
+        <div class="goals-section chapter-panel" data-chapter-scope="dashboard" data-chapter="summary">
           <div class="goals-header">
             <h4>Metas de Poupança</h4>
             <button class="primary-button small" id="addGoalButton"><i class="fa-solid fa-plus"></i> Adicionar Meta</button>
@@ -94,11 +113,19 @@
             <!-- Metas serão renderizadas aqui -->
           </div>
         </div>
-        <div class="cards-grid">
+        <div class="cards-grid chapter-panel" data-chapter-scope="dashboard" data-chapter="indicators">
           <article class="card accent-card">
             <div class="card-content">
               <span>Saldo atual</span>
               <strong id="cardBalance" role="status" aria-live="polite">R$ 0,00</strong>
+              <p class="card-note">Saldo realizado: inclui apenas lançamentos pagos.</p>
+            </div>
+          </article>
+          <article class="card accent-card">
+            <div class="card-content">
+              <span>Saldo previsto</span>
+              <strong id="cardProjectedBalance" role="status" aria-live="polite">R$ 0,00</strong>
+              <p class="card-note">Inclui contas pendentes e lançamentos agendados.</p>
             </div>
           </article>
           <article class="card accent-card">
@@ -145,7 +172,26 @@
           </article>
         </div>
 
-        <div class="dashboard-grid">
+        <section class="financial-position chapter-panel" data-chapter-scope="dashboard" data-chapter="summary" aria-labelledby="financialPositionTitle">
+          <div class="section-header">
+            <h4 id="financialPositionTitle">Posição financeira de hoje</h4>
+            <span>Conta e cofrinhos separados; saldo realizado não inclui pendências.</span>
+          </div>
+          <div class="position-stat-grid">
+            <div><span>Disponível na conta</span><strong id="positionAccountBalance">R$ 0,00</strong></div>
+            <div><span>Conta com compromissos deste mês</span><strong id="positionProjectedBalance">R$ 0,00</strong><small>Projeção; não altera o saldo realizado</small></div>
+            <div><span>Aplicado em cofrinhos</span><strong id="positionCofferBalance">R$ 0,00</strong><small id="positionCofferComposition">Principal R$ 0,00 · rendimento R$ 0,00</small></div>
+            <div><span>Patrimônio consolidado</span><strong id="positionNetWorth">R$ 0,00</strong></div>
+          </div>
+          <dl class="position-obligations">
+            <div><dt>A receber pendente</dt><dd id="positionPendingIncome">R$ 0,00</dd></div>
+            <div><dt>Boletos pendentes</dt><dd id="positionPendingExpense">R$ 0,00</dd></div>
+            <div><dt>Entradas agendadas</dt><dd id="positionScheduledIncome">R$ 0,00</dd></div>
+            <div><dt>Saídas agendadas</dt><dd id="positionScheduledExpense">R$ 0,00</dd></div>
+          </dl>
+        </section>
+
+        <div class="dashboard-grid chapter-panel" data-chapter-scope="dashboard" data-chapter="trends">
           <section class="chart-card">
             <div class="section-header">
               <h4>Entradas vs Saídas (Últimos 6 meses)</h4>
@@ -199,6 +245,7 @@
                 <option value="all">Todos</option>
                 <option value="income">Entrada</option>
                 <option value="expense">Saída</option>
+                <option value="transfer">Transferência</option>
               </select>
             </label>
             <label>
@@ -215,7 +262,11 @@
             </label>
           </div>
         </div>
-        <div class="table-responsive">
+        <div class="chapter-tabs" role="tablist" aria-label="Capítulos dos lançamentos" data-chapter-group="transactions">
+          <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="ledger">Movimentações</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="agenda">Agenda</button>
+        </div>
+        <div class="table-responsive chapter-panel" data-chapter-scope="transactions" data-chapter="ledger">
           <table class="data-table" id="transactionTable">
             <thead>
               <tr>
@@ -233,9 +284,14 @@
             <tbody></tbody>
           </table>
         </div>
-        <div class="pagination-row">
+        <div class="pagination-row chapter-panel" data-chapter-scope="transactions" data-chapter="ledger">
           <div id="transactionPagination"></div>
         </div>
+        <section class="report-card upcoming-panel chapter-panel" data-chapter-scope="transactions" data-chapter="agenda" aria-labelledby="upcomingTransactionsTitle">
+          <h4 id="upcomingTransactionsTitle">Pendências e próximos agendamentos</h4>
+          <p>Contas ainda não realizadas, em ordem de vencimento. Elas não alteram o saldo realizado.</p>
+          <div id="upcomingTransactionsList" class="upcoming-list" aria-live="polite"></div>
+        </section>
       </section>
 
       <!-- Categories -->
@@ -307,88 +363,201 @@
           </table>
         </div>
       </section>
+      <section class="page-panel" id="coffers">
+        <div class="panel-header page-header">
+          <div>
+            <h3>Cofrinhos</h3>
+            <p>Simule aportes, resgates e rendimentos. Nenhuma movimentação é enviada a instituições financeiras.</p>
+          </div>
+          <div class="coffer-template-actions">
+            <button type="button" class="secondary-button" data-coffer-template="dindin">Criar Dindin</button>
+            <button type="button" class="secondary-button" data-coffer-template="moto">Criar Moto</button>
+            <button type="button" class="secondary-button" data-coffer-template="turn">Cofrinho da Virada</button>
+            <button type="button" class="secondary-button" data-coffer-template="marketplace">Mercado Livre</button>
+            <button type="button" class="primary-button" id="createCofferButton"><i class="fa-solid fa-plus" aria-hidden="true"></i> Novo cofrinho</button>
+          </div>
+        </div>
+        <div class="cards-grid coffer-summary-grid">
+          <article class="card"><div class="card-content"><span>Saldo total nos cofrinhos</span><strong id="cofferTotalBalance">R$ 0,00</strong></div></article>
+          <article class="card"><div class="card-content"><span>Principal aportado</span><strong id="cofferPrincipalTotal">R$ 0,00</strong></div></article>
+          <article class="card"><div class="card-content"><span>Rendimento líquido</span><strong id="cofferYieldTotal">R$ 0,00</strong></div></article>
+        </div>
+        <div class="chapter-tabs" role="tablist" aria-label="Capítulos dos cofrinhos" data-chapter-group="coffers">
+          <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="accounts">Meus cofrinhos</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="rules">Regras da simulação</button>
+        </div>
+        <section class="admin-card coffer-rules-card chapter-panel" data-chapter-scope="coffers" data-chapter="rules">
+          <h4>Parâmetros da simulação</h4>
+          <p>Valores dos cofrinhos são armazenados na moeda base (BRL). Taxas ilustrativas; esta simulação não representa oferta financeira.</p>
+          <form id="cofferSettingsForm" class="form-grid">
+            <label>CDI anual estimado (%)
+              <input type="number" id="cofferCdiAnnual" min="0" max="1000" step="0.01" required />
+            </label>
+            <label>Faixa-base (% do CDI)
+              <input type="number" id="cofferCommonBase" min="0" max="1000" step="0.01" required />
+            </label>
+            <label>Comum — bônus (% do CDI)
+              <input type="number" id="cofferCommonBonus" min="0" max="1000" step="0.01" required />
+            </label>
+            <label>Comum — faixa compartilhada
+              <input type="number" id="cofferCommonCap" min="0" step="0.01" required />
+            </label>
+            <label>Virada — bônus (% do CDI)
+              <input type="number" id="cofferTurnBonus" min="0" max="1000" step="0.01" required />
+            </label>
+            <label>Virada — limite da faixa
+              <input type="number" id="cofferTurnCap" min="0" step="0.01" required />
+            </label>
+            <label>Início da campanha Virada
+              <input type="date" id="cofferTurnStart" required />
+            </label>
+            <label>Fim da campanha Virada
+              <input type="date" id="cofferTurnEnd" required />
+            </label>
+            <label>Mercado Livre — bônus (% do CDI)
+              <input type="number" id="cofferMarketplaceBonus" min="0" max="1000" step="0.01" required />
+            </label>
+            <label>Fim da taxa promocional Mercado Livre
+              <input type="date" id="cofferMarketplacePromoEnd" required />
+            </label>
+            <label>Limite de depósito Mercado Livre
+              <input type="number" id="cofferMarketplaceLimit" min="0" step="0.01" required />
+            </label>
+            <label>IOF configurado (%)
+              <input type="number" id="cofferIofRate" min="0" max="100" step="0.01" required />
+            </label>
+            <label>Data simulada (opcional)
+              <input type="date" id="cofferSimulationDate" />
+            </label>
+            <label class="checkbox-label"><input type="checkbox" id="cofferTaxEnabled" /> Aplicar IR regressivo estimado</label>
+            <label class="checkbox-label"><input type="checkbox" id="cofferIofEnabled" /> Aplicar IOF configurado</label>
+            <label class="checkbox-label"><input type="checkbox" id="cofferMonthlyGoalRequired" /> Exigir meta mensal para bônus dos comuns</label>
+            <div class="modal-actions full-width"><button type="submit" class="primary-button">Salvar parâmetros</button></div>
+          </form>
+        </section>
+        <div id="cofferList" class="coffer-grid chapter-panel" data-chapter-scope="coffers" data-chapter="accounts" aria-live="polite"></div>
+      </section>
+      <section class="page-panel credit-cards-page" id="creditCards">
+        <div class="panel-header page-header">
+          <div>
+            <h3>Cartões de crédito</h3>
+            <p>Limites e faturas são controles locais. Compras não reduzem o saldo da conta até o pagamento da fatura.</p>
+          </div>
+          <button type="button" class="primary-button" id="createCreditCardButton"><i class="fa-solid fa-plus" aria-hidden="true"></i> Novo cartão</button>
+        </div>
+        <div class="cards-grid credit-card-summary">
+          <article class="card"><div class="card-content"><span>Limite total</span><strong id="creditTotalLimit">R$ 0,00</strong></div></article>
+          <article class="card"><div class="card-content"><span>Limite utilizado</span><strong id="creditUsedLimit">R$ 0,00</strong></div></article>
+          <article class="card"><div class="card-content"><span>Limite disponível</span><strong id="creditAvailableLimit">R$ 0,00</strong></div></article>
+          <article class="card"><div class="card-content"><span>Faturas em aberto</span><strong id="creditOpenInvoices">R$ 0,00</strong></div></article>
+        </div>
+        <div class="chapter-tabs" role="tablist" aria-label="Capítulos dos cartões" data-chapter-group="creditCards">
+          <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="cards">Meus cartões</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="invoices">Faturas</button>
+        </div>
+        <div id="creditCardList" class="credit-card-grid chapter-panel" data-chapter-scope="creditCards" data-chapter="cards" aria-live="polite"></div>
+        <div id="creditInvoiceList" class="credit-invoice-list chapter-panel" data-chapter-scope="creditCards" data-chapter="invoices" aria-live="polite"></div>
+      </section>
       <!-- Reports -->
-      <section class="page-panel" id="reports">
-        <div class="panel-header">
+      <section class="page-panel report-page" id="reports">
+        <div class="panel-header page-header report-page-header">
           <div>
             <h3>Relatórios e análises</h3>
-            <p>Números inteligentes para decisões financeiras melhores.</p>
+            <p>Acompanhe resultados, entenda tendências e planeje os próximos passos.</p>
           </div>
-          <div class="filter-row wrap">
+          <div class="report-toolbar">
             <label>
               Ano
               <select id="reportYear"></select>
             </label>
-            <button class="secondary-button" id="downloadCsvButton"><i class="fa-solid fa-file-csv"></i> CSV</button>
-            <button class="secondary-button" id="downloadPdfButton"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+            <div class="report-export-actions" aria-label="Exportar relatório">
+              <button class="secondary-button" id="downloadCsvButton"><i class="fa-solid fa-file-csv" aria-hidden="true"></i> CSV</button>
+              <button class="secondary-button" id="downloadPdfButton"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i> PDF</button>
+            </div>
           </div>
         </div>
-        <div class="report-tabs">
-          <button class="tab-button active" data-tab="analysis"><i class="fa-solid fa-chart-bar"></i> Análise Atual</button>
-          <button class="tab-button" data-tab="projections"><i class="fa-solid fa-chart-line"></i> Projeções</button>
-          <button class="tab-button" data-tab="planning"><i class="fa-solid fa-target"></i> Planejamento</button>
+        <div class="report-tabs" role="tablist" aria-label="Seções dos relatórios">
+          <button class="tab-button active" id="analysis-tab-button" role="tab" aria-selected="true" aria-controls="analysis-tab" data-tab="analysis"><i class="fa-solid fa-chart-bar" aria-hidden="true"></i> Visão geral</button>
+          <button class="tab-button" id="projections-tab-button" role="tab" aria-selected="false" aria-controls="projections-tab" data-tab="projections"><i class="fa-solid fa-chart-line" aria-hidden="true"></i> Projeções</button>
+          <button class="tab-button" id="planning-tab-button" role="tab" aria-selected="false" aria-controls="planning-tab" data-tab="planning"><i class="fa-solid fa-bullseye" aria-hidden="true"></i> Planejamento</button>
         </div>
         <div class="reports-grid">
           <!-- Análise Atual Tab -->
-          <div class="tab-content active" id="analysis-tab">
-            <section class="report-card report-summary wide">
+          <div class="tab-content active" id="analysis-tab" role="tabpanel" aria-labelledby="analysis-tab-button" tabindex="0">
+            <div class="report-empty-state" id="reportsEmptyState" hidden>
+              <h3>Ainda não há lançamentos para analisar</h3>
+              <p>As análises aparecem conforme receitas e despesas forem registradas. Cofrinhos e metas podem ser configurados sem afetar o livro de lançamentos.</p>
+              <button type="button" class="primary-button" id="reportsEmptyAddTransaction"><i class="fa-solid fa-plus" aria-hidden="true"></i> Registrar lançamento</button>
+            </div>
+            <div class="chapter-tabs" id="analysisChapterTabs" role="tablist" aria-label="Capítulos da visão geral" data-chapter-group="analysis">
+              <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="summary">Resumo</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="spending">Despesas</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="charts">Gráficos</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="income">Receitas</button>
+            </div>
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="analysis" data-chapter="summary">
               <h4>Resumo financeiro</h4>
               <div id="reportSummary" class="report-list"></div>
             </section>
-            <section class="report-card">
+            <section class="report-card chapter-panel" data-chapter-scope="analysis" data-chapter="charts">
               <h4>Gastos por categoria</h4>
               <canvas id="chartReportCategory"></canvas>
             </section>
-            <section class="report-card">
+            <section class="report-card chapter-panel" data-chapter-scope="analysis" data-chapter="charts">
               <h4>Comparativo mês a mês</h4>
               <canvas id="chartReportMonthly"></canvas>
             </section>
-            <section class="report-card">
+            <section class="report-card chapter-panel" data-chapter-scope="analysis" data-chapter="charts">
               <h4>Gastos por forma de pagamento</h4>
               <canvas id="chartReportPayment"></canvas>
             </section>
-            <section class="report-card report-summary">
+            <section class="report-card report-summary chapter-panel" data-chapter-scope="analysis" data-chapter="spending">
               <h4>Previsão e maiores gastos</h4>
               <div class="report-list" id="reportTopExpenses"></div>
             </section>
-            <section class="report-card report-summary">
+            <section class="report-card heatmap-card chapter-panel" data-chapter-scope="analysis" data-chapter="spending">
+              <h4>Dias com mais gastos</h4>
+              <div class="heatmap-grid" id="spendingHeatmap"></div>
+            </section>
+            <section class="report-card report-summary chapter-panel" data-chapter-scope="analysis" data-chapter="income">
               <h4>Mês com mais ganhos</h4>
               <canvas id="chartReportTopIncome"></canvas>
               <div class="report-list" id="reportTopIncomeMonth"></div>
             </section>
-            <section class="report-card heatmap-card">
-              <h4>Dias com mais gastos</h4>
-              <div class="heatmap-grid" id="spendingHeatmap"></div>
-            </section>
           </div>
 
           <!-- Projeções Tab -->
-          <div class="tab-content" id="projections-tab">
-            <section class="report-card report-summary wide">
+          <div class="tab-content" id="projections-tab" role="tabpanel" aria-labelledby="projections-tab-button" tabindex="0">
+            <div class="chapter-tabs" role="tablist" aria-label="Capítulos das projeções" data-chapter-group="projections">
+              <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="overview">Visão do período</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="purchase">Cabe no bolso?</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="balance">Fluxo de saldo</button>
+            </div>
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="projections" data-chapter="overview">
               <h4>Dashboard de projeções</h4>
-              <div id="projectionDashboard" class="report-list" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem; margin-bottom:1rem;">
-                <div class="metric-card" style="background: rgba(34, 197, 94, 0.1); border-left:4px solid #22c55e; padding:1rem; border-radius:8px;">
-                  <div style="font-size:0.8rem; color:#6b7280;">Capacidade de poupança</div>
-                  <div id="savingsCapacity" style="font-size:1.2rem; font-weight:600; color:#22c55e;">R$ 0,00</div>
+              <div id="projectionDashboard" class="projection-kpi-grid">
+                <div class="metric-card metric-card--positive">
+                  <div class="metric-label">Capacidade de poupança</div>
+                  <div id="savingsCapacity" class="metric-value">R$ 0,00</div>
                 </div>
-                <div class="metric-card" style="background: rgba(59, 130, 246, 0.1); border-left:4px solid #3b82f6; padding:1rem; border-radius:8px;">
-                  <div style="font-size:0.8rem; color:#6b7280;">Projeção em 6 meses</div>
-                  <div id="sixMonthProjection" style="font-size:1.2rem; font-weight:600; color:#3b82f6;">R$ 0,00</div>
+                <div class="metric-card metric-card--accent">
+                  <div class="metric-label">Projeção em 6 meses</div>
+                  <div id="sixMonthProjection" class="metric-value">R$ 0,00</div>
                 </div>
-                <div class="metric-card" style="background: rgba(245, 158, 11, 0.1); border-left:4px solid #f59e0b; padding:1rem; border-radius:8px;">
-                  <div style="font-size:0.8rem; color:#6b7280;">Limite seguro de parcela</div>
-                  <div id="safeInstallmentLimit" style="font-size:1.2rem; font-weight:600; color:#f59e0b;">R$ 0,00</div>
+                <div class="metric-card metric-card--warning">
+                  <div class="metric-label">Limite sugerido para parcelas</div>
+                  <div id="safeInstallmentLimit" class="metric-value">R$ 0,00</div>
                 </div>
               </div>
             </section>
-            <section class="report-card report-summary">
+            <section class="report-card report-summary chapter-panel" data-chapter-scope="projections" data-chapter="overview">
               <h4>Projeções de ganhos e gastos</h4>
-              <div id="projectionSummary" class="report-list" style="display:grid; gap:0.75rem;"></div>
+              <div id="projectionSummary" class="report-list"></div>
               <div id="projectionList" class="report-list"></div>
             </section>
-            <section class="report-card report-summary wide">
-              <h4>Simulador de compra</h4>
-              <div class="projection-form" style="display:grid; gap:0.75rem;">
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="projections" data-chapter="purchase">
+              <h4>Cabe no bolso?</h4>
+              <div class="projection-form">
                 <label>
                   Valor da compra
                   <input type="number" id="purchaseValue" step="0.01" min="0" placeholder="R$ 0,00" />
@@ -398,30 +567,30 @@
                   <input type="number" id="purchaseInstallments" min="1" step="1" value="1" />
                 </label>
                 <label>
-                  Renda mensal estimada
-                  <input type="number" id="purchaseMonthlyIncome" step="0.01" min="0" placeholder="Use média automática" />
+                  Receita adicional estimada (opcional)
+                  <input type="number" id="purchaseMonthlyIncome" step="0.01" min="0" placeholder="Não incluída no saldo realizado" />
                 </label>
                 <label>
-                  Gastos mensais estimados
-                  <input type="number" id="purchaseMonthlyExpense" step="0.01" min="0" placeholder="Use média automática" />
+                  Despesa variável adicional (opcional)
+                  <input type="number" id="purchaseMonthlyExpense" step="0.01" min="0" placeholder="Além dos boletos e fixos listados" />
                 </label>
                 <button class="primary-button" id="calculatePurchaseProjection">Calcular compra</button>
               </div>
-              <div id="purchaseProjectionResult" class="report-list" style="margin:1rem 0;"></div>
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:start;">
+              <div id="purchaseProjectionResult" class="report-list projection-result"></div>
+              <div class="report-insight-grid">
                 <div>
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Impacto no orçamento mensal</h5>
+                  <h5>Impacto no orçamento mensal</h5>
                   <canvas id="chartPurchaseProjection"></canvas>
                 </div>
-                <div id="purchaseInsights" style="background: rgba(31, 41, 55, 0.5); padding:1rem; border-radius:8px; border-left:4px solid #38bdf8;">
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">💡 Insights</h5>
-                  <div id="purchaseInsightsContent" style="font-size:0.85rem; line-height:1.4;"></div>
+                <div id="purchaseInsights" class="report-insight">
+                  <h5>Insights da simulação</h5>
+                  <div id="purchaseInsightsContent"></div>
                 </div>
               </div>
             </section>
-            <section class="report-card report-summary wide">
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="projections" data-chapter="balance">
               <h4>Projeção de saldo em meses</h4>
-              <div class="projection-form" style="display:grid; gap:0.75rem;">
+              <div class="projection-form">
                 <label>
                   Saldo atual
                   <input type="number" id="balanceStartValue" step="0.01" min="0" placeholder="Use saldo atual" />
@@ -440,25 +609,68 @@
                 </label>
                 <button class="primary-button" id="calculateBalanceProjection">Calcular projeção</button>
               </div>
-              <div id="balanceProjectionResult" class="report-list" style="margin:1rem 0;"></div>
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem; align-items:start;">
+              <div id="balanceProjectionResult" class="report-list projection-result"></div>
+              <div class="report-insight-grid">
                 <div>
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Evolução do saldo</h5>
+                  <h5>Evolução do saldo</h5>
                   <canvas id="chartBalanceProjection"></canvas>
                 </div>
-                <div id="balanceInsights" style="background: rgba(31, 41, 55, 0.5); padding:1rem; border-radius:8px; border-left:4px solid #38bdf8;">
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">📈 Análise</h5>
-                  <div id="balanceInsightsContent" style="font-size:0.85rem; line-height:1.4;"></div>
+                <div id="balanceInsights" class="report-insight">
+                  <h5>Análise da projeção</h5>
+                  <div id="balanceInsightsContent"></div>
                 </div>
               </div>
             </section>
           </div>
 
           <!-- Planejamento Tab -->
-          <div class="tab-content" id="planning-tab">
-            <section class="report-card report-summary wide">
-              <h4>🎯 Metas de poupança</h4>
-              <div class="goal-form" style="display:grid; gap:0.75rem; margin-bottom:1rem;">
+          <div class="tab-content" id="planning-tab" role="tabpanel" aria-labelledby="planning-tab-button" tabindex="0">
+            <div class="chapter-tabs" role="tablist" aria-label="Capítulos do planejamento" data-chapter-group="planning">
+              <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="future">Longo prazo</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="goals">Metas</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="risk">Risco</button>
+              <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="scenarios">Cenários</button>
+            </div>
+            <section class="report-card report-summary wide long-term-planner chapter-panel" data-chapter-scope="planning" data-chapter="future">
+              <h4>Futuro de longo prazo</h4>
+              <p>Simulação independente do livro de lançamentos. O saldo inicial pode partir dos cofrinhos atuais; os resultados são estimativas nominais e corrigidas pela inflação, antes de impostos.</p>
+              <div class="projection-form">
+                <label>Saldo aplicado inicial (vazio = cofrinhos atuais)
+                  <input type="number" id="futureStartingBalance" min="0" step="0.01" placeholder="Usar cofrinhos atuais" />
+                </label>
+                <label>Aporte mensal
+                  <input type="number" id="futureMonthlyContribution" min="0" step="0.01" placeholder="Usar meta mensal" />
+                </label>
+                <label>CDI anual estimado (%)
+                  <input type="number" id="futureCdiAnnual" min="0" max="1000" step="0.01" />
+                </label>
+                <label>Cenário de rendimento
+                  <select id="futureScenario">
+                    <option value="0.75">Conservador · 75% do CDI</option>
+                    <option value="1" selected>Moderado · 100% do CDI</option>
+                    <option value="1.15">Otimista · 115% do CDI</option>
+                  </select>
+                </label>
+                <label>Inflação anual estimada (%)
+                  <input type="number" id="futureInflation" min="0" max="100" step="0.01" />
+                </label>
+                <label>Horizonte
+                  <select id="futureYears">
+                    <option value="1">1 ano</option>
+                    <option value="3">3 anos</option>
+                    <option value="5">5 anos</option>
+                    <option value="10" selected>10 anos</option>
+                    <option value="20">20 anos</option>
+                  </select>
+                </label>
+                <button type="button" class="primary-button" id="calculateLongTermProjection">Simular horizonte</button>
+              </div>
+              <div id="longTermProjectionResult" class="long-term-result" aria-live="polite"></div>
+              <div class="long-term-chart"><canvas id="chartLongTermProjection" aria-label="Projeção nominal e real por ano"></canvas></div>
+            </section>
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="planning" data-chapter="goals">
+              <h4>Metas de poupança</h4>
+              <div class="goal-form">
                 <label>
                   Meta de poupança mensal
                   <input type="number" id="monthlySavingsGoal" step="0.01" min="0" placeholder="R$ 0,00" />
@@ -470,33 +682,33 @@
                 <button class="primary-button" id="setSavingsGoal">Definir meta</button>
               </div>
               <div id="savingsGoalProgress" class="report-list"></div>
-              <canvas id="chartSavingsGoal" style="margin-top:1rem;"></canvas>
+              <canvas id="chartSavingsGoal"></canvas>
               <div id="trendAnalysisDetails"></div>
             </section>
-            <section class="report-card report-summary wide">
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="planning" data-chapter="risk">
               <h4>⚠️ Cenários de risco</h4>
-              <div class="risk-scenarios" style="display:grid; gap:1rem;">
-                <div class="scenario-card" style="background: rgba(239, 68, 68, 0.1); border-left:4px solid #ef4444; padding:1rem; border-radius:8px;">
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Sem renda por 3 meses</h5>
-                  <div id="emergencyFund3Months" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
-                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Fundo necessário</div>
+              <div class="risk-scenarios">
+                <div class="scenario-card scenario-card--danger">
+                  <h5>Sem renda por 3 meses</h5>
+                  <div id="emergencyFund3Months" class="metric-value">R$ 0,00</div>
+                  <div class="metric-label">Fundo necessário</div>
                 </div>
-                <div class="scenario-card" style="background: rgba(245, 158, 11, 0.1); border-left:4px solid #f59e0b; padding:1rem; border-radius:8px;">
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Aumento de 20% nos gastos</h5>
-                  <div id="expenseIncrease20Percent" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
-                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Novo saldo mensal</div>
+                <div class="scenario-card scenario-card--warning">
+                  <h5>Aumento de 20% nos gastos</h5>
+                  <div id="expenseIncrease20Percent" class="metric-value">R$ 0,00</div>
+                  <div class="metric-label">Novo saldo mensal</div>
                 </div>
-                <div class="scenario-card" style="background: rgba(34, 197, 94, 0.1); border-left:4px solid #22c55e; padding:1rem; border-radius:8px;">
-                  <h5 style="margin:0 0 0.5rem 0; font-size:0.9rem;">Reducao de 15% na renda</h5>
-                  <div id="incomeReduction15Percent" style="font-size:1.1rem; font-weight:600;">R$ 0,00</div>
-                  <div style="font-size:0.8rem; color:#6b7280; margin-top:0.25rem;">Novo saldo mensal</div>
+                <div class="scenario-card scenario-card--positive">
+                  <h5>Redução de 15% na renda</h5>
+                  <div id="incomeReduction15Percent" class="metric-value">R$ 0,00</div>
+                  <div class="metric-label">Novo saldo mensal</div>
                 </div>
               </div>
               <div id="riskAnalysisDetails"></div>
             </section>
-            <section class="report-card report-summary wide">
+            <section class="report-card report-summary wide chapter-panel" data-chapter-scope="planning" data-chapter="scenarios">
               <h4>📊 Cenários salvos</h4>
-              <div class="scenario-form" style="display:grid; gap:0.75rem; margin-bottom:1rem;">
+              <div class="scenario-form">
                 <label>
                   Nome do cenário
                   <input type="text" id="scenarioName" placeholder="Ex: Compra do carro" />
@@ -563,6 +775,11 @@
                 <p>Configure despesas que se repetem mensalmente</p>
               </div>
               <div class="nav-item">
+                <i class="fa-solid fa-piggy-bank"></i>
+                <strong>Cofrinhos</strong>
+                <p>Acompanhe principal, rendimento e operações vinculadas aos lançamentos</p>
+              </div>
+              <div class="nav-item">
                 <i class="fa-solid fa-chart-line"></i>
                 <strong>Relatórios</strong>
                 <p>Análises detalhadas com gráficos e projeções</p>
@@ -587,7 +804,7 @@
             <h5>📈 Cards Principais:</h5>
             <ul>
               <li><strong>Saldo Atual:</strong> Dinheiro que você tem disponível</li>
-              <li><strong>Saldo Inicial:</strong> Valor que você começou o mês</li>
+              <li><strong>Saldo Inicial:</strong> saldo da conta na data informada; não é uma receita</li>
               <li><strong>Receitas do Mês:</strong> Total de dinheiro que entrou</li>
               <li><strong>Despesas do Mês:</strong> Total de dinheiro que saiu</li>
               <li><strong>Saldo Líquido:</strong> Receitas menos despesas</li>
@@ -618,14 +835,14 @@
               <li>Digite o <strong>Valor</strong> (use ponto para centavos)</li>
               <li>Adicione uma <strong>Descrição</strong> clara</li>
               <li>Selecione o <strong>Método de Pagamento</strong></li>
-              <li>Marque o <strong>Status:</strong> Pago ou Pendente</li>
+              <li>Marque o <strong>Status:</strong> Pago, Pendente ou Agendado</li>
               <li>Clique em <strong>Salvar</strong></li>
             </ol>
 
             <h5>📝 Campos Importantes:</h5>
             <ul>
               <li><strong>Subcategoria:</strong> Detalhe dentro da categoria (ex: "Supermercado" dentro de "Alimentação")</li>
-              <li><strong>Status:</strong> Ajuda a controlar contas a pagar/receber</li>
+              <li><strong>Status:</strong> Pago entra no realizado; Pendente representa conta a pagar/receber; Agendado entra apenas em projeções</li>
             </ul>
 
             <h5>🔍 Busca e Filtros:</h5>
@@ -638,7 +855,7 @@
             <p>As categorias ajudam a classificar seus gastos para melhor análise.</p>
 
             <h5>🎨 Categorias Padrão:</h5>
-            <p>O app já vem com categorias básicas como Alimentação, Transporte, Lazer, etc.</p>
+            <p>O app já vem com categorias básicas como Alimentação, Transporte e Lazer. Elas são protegidas contra edição e exclusão; crie uma categoria personalizada para regras próprias.</p>
 
             <h5>➕ Criando Categorias Personalizadas:</h5>
             <ol>
@@ -678,6 +895,17 @@
 
             <h5>🤖 Aplicação Automática:</h5>
             <p>Use o botão <strong>"Aplicar Gastos Fixos"</strong> para lançar automaticamente as contas do mês atual.</p>
+          </div>
+
+          <div class="help-section">
+            <h4>🐷 Cofrinhos - Saldos e Rendimentos Simulados</h4>
+            <p>Cofrinhos Comuns, da Virada e Mercado Livre mantêm principal e rendimento separados. CDI, faixas, limites, IR/IOF e datas promocionais podem ser ajustados na própria seção.</p>
+            <ul>
+              <li>Aportes e resgates são lançamentos vinculados que afetam o saldo da conta.</li>
+              <li>Compras no checkout do Mercado Livre reduzem apenas o cofrinho e não aplicam a perda proporcional do resgate comum.</li>
+              <li>Somente operações pagas alteram saldos; pendências e agendamentos ficam fora do realizado.</li>
+              <li>O rendimento é uma simulação local em dias úteis de segunda a sexta, sem calendário de feriados, e não é oferta bancária.</li>
+            </ul>
           </div>
 
           <!-- Relatórios -->
@@ -835,23 +1063,30 @@
       </section>
 
       <!-- Admin -->
-      <section class="page-panel" id="admin">
-        <div class="panel-header">
+      <section class="page-panel settings-page" id="admin">
+        <div class="panel-header page-header">
           <div>
-            <h3>Painel Administrativo</h3>
-            <p>Configurações avançadas, backup e acesso direto aos dados.</p>
-            
-          </div>
-          <div class="filter-row wrap">
-            <button class="danger-button" id="clearDataButton"><i class="fa-solid fa-trash"></i> Limpar todos os dados</button>
-            <button class="warning-button" id="clearTransactionsButton"><i class="fa-solid fa-times"></i> Excluir lançamentos</button>
-            <button class="secondary-button" id="clearCategoriesButton"><i class="fa-solid fa-folder-minus"></i> Limpar categorias personalizadas</button>
-            <button class="secondary-button" id="clearFixedExpensesButton"><i class="fa-solid fa-repeat"></i> Redefinir gastos</button>
+            <h3>Configurações</h3>
+            <p>Preferências, dados e aparência do seu espaço financeiro.</p>
           </div>
         </div>
-        <div class="admin-grid">
+        <div class="chapter-tabs" role="tablist" aria-label="Capítulos das configurações" data-chapter-group="settings">
+          <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="preferences">Preferências</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="data">Dados e segurança</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="limits">Orçamentos</button>
+          <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="critical">Ações críticas</button>
+        </div>
+        <div class="settings-content">
+          <section class="settings-section chapter-panel" data-chapter-scope="settings" data-chapter="preferences" aria-labelledby="settings-preferences-title">
+            <div class="settings-section-header">
+              <div>
+                <h4 id="settings-preferences-title">Preferências</h4>
+                <p>Ajuste como o LuminaFin apresenta seus dados e avisos.</p>
+              </div>
+            </div>
+            <div class="admin-grid settings-grid">
           <section class="admin-card">
-            <h4>🌍 Localização e Moeda</h4>
+            <h4>Moeda de exibição</h4>
             <div class="theme-form">
               <label>
                 Moeda
@@ -864,8 +1099,35 @@
                   <option value="CAD">🇨🇦 Dólar Canadense (C$)</option>
                 </select>
               </label>
-              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">ℹ️ A moeda selecionada será usada em todo o app</p>
+              <p class="field-help">Os valores são armazenados em BRL. Para exibir outra moeda, cadastre uma taxa datada; a conversão não altera valores históricos.</p>
+              <div class="form-grid">
+                <label>Moeda de referência
+                  <select id="fxRateCurrency">
+                    <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
+                    <option value="GBP">GBP</option>
+                    <option value="JPY">JPY</option>
+                    <option value="CAD">CAD</option>
+                  </select>
+                </label>
+                <label>BRL por 1 unidade
+                  <input type="number" id="fxRateValue" min="0.000001" step="0.000001" required />
+                </label>
+                <label>Válida desde
+                  <input type="date" id="fxRateDate" required />
+                </label>
+                <button type="button" class="secondary-button" id="addFxRateButton">Registrar taxa</button>
+              </div>
+              <div id="fxRatesList" class="fx-rates-list" aria-live="polite"></div>
             </div>
+          </section>
+          <section class="admin-card">
+            <h4>Projeções financeiras</h4>
+            <label>Inflação anual estimada (%)
+              <input type="number" id="annualInflationRate" min="0" max="100" step="0.01" value="0" />
+            </label>
+            <button type="button" class="secondary-button" id="saveProjectionSettings">Salvar parâmetro</button>
+            <p class="field-help">Usada apenas para estimar valores futuros; não altera lançamentos existentes.</p>
           </section>
 
           <section class="admin-card">
@@ -879,61 +1141,89 @@
                 Avisar quando limite atingir
                 <input type="number" id="notificationThreshold" min="50" max="100" value="80" />%
               </label>
-              <button class="primary-button" id="enablePushButton" style="width: 100%; margin-top: 1rem;">
+              <button class="secondary-button" id="enablePushButton">
                 <i class="fa-solid fa-bell"></i> Ativar notificações do navegador
               </button>
-              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">📲 Receba alertas quando estiver próximo dos limites de gastos</p>
+              <p class="field-help">Receba avisos neste navegador ao se aproximar do limite.</p>
             </div>
           </section>
-
           <section class="admin-card">
-            <h4>🗑️ Lixeira</h4>
-            <div class="theme-form">
-              <p id="trashStatusText" style="margin-bottom: 0.75rem; font-weight: 600;">Lixeira vazia</p>
-              <button class="secondary-button" id="restoreTrashButton" style="width: 100%; margin-bottom: 0.5rem;"><i class="fa-solid fa-rotate-left"></i> Restaurar último item</button>
-              <button class="danger-button" id="emptyTrashButton" style="width: 100%;"><i class="fa-solid fa-trash-can"></i> Esvaziar lixeira</button>
-              <p style="color: #6b7280; font-size: 0.9rem; margin-top: 0.5rem;">Itens permanecem 30 dias na lixeira antes de exclusão permanente.</p>
-            </div>
-          </section>
-
-          <section class="admin-card">
-            <h4>Tema e cores</h4>
+            <h4>Aparência</h4>
             <div class="theme-form">
               <label>
-                Background
+                Fundo
                 <input type="color" id="themeBg" value="#0f172a" />
               </label>
               <label>
-                Cabeçalhos
+                Superfície
                 <input type="color" id="themeHeader" value="#111827" />
               </label>
               <label>
-                Cards
+                Cards e painéis
                 <input type="color" id="themeCard" value="#1f2937" />
               </label>
               <label>
-                Cor primária
+                Destaque
                 <input type="color" id="themeAccent" value="#38bdf8" />
               </label>
-              <button class="primary-button" id="saveThemeButton">Salvar tema</button>
+              <button class="secondary-button" id="saveThemeButton">Salvar aparência</button>
             </div>
           </section>
+            </div>
+          </section>
+
+          <section class="settings-section chapter-panel" data-chapter-scope="settings" data-chapter="data" aria-labelledby="settings-data-title">
+            <div class="settings-section-header">
+              <div>
+                <h4 id="settings-data-title">Dados e segurança</h4>
+                <p>Faça cópias, restaure informações ou gerencie itens removidos.</p>
+              </div>
+            </div>
+            <div class="admin-grid settings-grid">
           <section class="admin-card">
-            <h4>Dados brutos</h4>
-            <div class="raw-data-panel">
-              <textarea id="rawDataEditor" rows="10"></textarea>
-              <div class="raw-actions">
-                <button class="secondary-button" id="refreshRawButton"><i class="fa-solid fa-arrow-rotate-right"></i> Atualizar</button>
-                <button class="primary-button" id="applyRawButton"><i class="fa-solid fa-floppy-disk"></i> Aplicar JSON</button>
-              </div>
-              <div class="raw-actions">
-                <input type="file" id="backupImportInput" accept="application/json" class="hidden" />
-                <button class="secondary-button" id="importBackupButton"><i class="fa-solid fa-upload"></i> Importar backup JSON</button>
-              </div>
+            <h4>Backup e restauração</h4>
+            <p class="settings-card-description">Exporte seus dados ou importe um arquivo de backup.</p>
+            <div class="raw-data-panel backup-actions">
+              <button class="secondary-button" id="downloadSettingsBackupButton"><i class="fa-solid fa-download" aria-hidden="true"></i> Baixar backup</button>
+              <input type="file" id="backupImportInput" accept="application/json" class="hidden" />
+              <button class="secondary-button" id="importBackupButton"><i class="fa-solid fa-upload" aria-hidden="true"></i> Importar backup</button>
+            </div>
+            <div class="backup-status" id="backupStatus" aria-live="polite"></div>
+          </section>
+          <section class="admin-card">
+            <h4>Lixeira</h4>
+            <div class="theme-form">
+              <p id="trashStatusText" class="trash-status">Lixeira vazia</p>
+              <div id="trashItemsList" class="trash-items-list" aria-live="polite"></div>
+              <button class="secondary-button" id="restoreTrashButton"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Restaurar último item</button>
+              <button class="danger-button" id="emptyTrashButton"><i class="fa-solid fa-trash-can" aria-hidden="true"></i> Esvaziar lixeira</button>
+              <p class="field-help">Itens removidos podem ser recuperados por até 30 dias.</p>
             </div>
           </section>
           <section class="admin-card wide">
-            <h4>Configurar limites por categoria</h4>
+            <h4>Editor avançado de dados</h4>
+            <p class="settings-card-description">Edite o estado em JSON. Uma cópia de segurança é criada antes de aplicar alterações.</p>
+            <div class="raw-data-panel">
+              <label for="rawDataEditor">Dados da aplicação (JSON)</label>
+              <textarea id="rawDataEditor" rows="10" spellcheck="false"></textarea>
+              <div class="raw-actions">
+                <button class="secondary-button" id="refreshRawButton"><i class="fa-solid fa-arrow-rotate-right" aria-hidden="true"></i> Recarregar dados</button>
+                <button class="primary-button" id="applyRawButton"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Validar e aplicar</button>
+              </div>
+            </div>
+          </section>
+            </div>
+          </section>
+
+          <section class="settings-section chapter-panel" data-chapter-scope="settings" data-chapter="limits" aria-labelledby="settings-limits-title">
+            <div class="settings-section-header">
+              <div>
+                <h4 id="settings-limits-title">Orçamento por categoria</h4>
+                <p>Defina limites mensais e acompanhe o uso de cada categoria.</p>
+              </div>
+            </div>
+            <div class="admin-grid settings-grid">
+          <section class="admin-card wide">
             <div class="table-responsive small">
               <table class="data-table" id="limitTable">
                 <thead>
@@ -946,7 +1236,21 @@
                 <tbody></tbody>
               </table>
             </div>
-            <div class="backup-status" id="backupStatus" aria-live="polite"></div>
+          </section>
+            </div>
+          </section>
+
+          <section class="settings-danger-zone chapter-panel" data-chapter-scope="settings" data-chapter="critical" aria-labelledby="settings-danger-title">
+            <div>
+              <h4 id="settings-danger-title">Ações críticas</h4>
+              <p>Estas ações removem dados. Faça um backup antes de continuar.</p>
+            </div>
+            <div class="settings-danger-actions">
+              <button class="secondary-button" id="clearCategoriesButton"><i class="fa-solid fa-folder-minus" aria-hidden="true"></i> Limpar categorias pessoais</button>
+              <button class="secondary-button" id="clearFixedExpensesButton"><i class="fa-solid fa-repeat" aria-hidden="true"></i> Redefinir gastos fixos</button>
+              <button class="warning-button" id="clearTransactionsButton"><i class="fa-solid fa-times" aria-hidden="true"></i> Excluir lançamentos</button>
+              <button class="danger-button" id="clearDataButton"><i class="fa-solid fa-trash" aria-hidden="true"></i> Apagar todos os dados</button>
+            </div>
           </section>
         </div>
       </section>
@@ -997,6 +1301,7 @@
             <select id="transactionType" required>
               <option value="income">Entrada</option>
               <option value="expense">Saída</option>
+              <option value="transfer">Transferência do cofrinho</option>
             </select>
           </label>
           <label>
@@ -1008,13 +1313,52 @@
             <input type="text" id="transactionSubcategory" placeholder="Ex: Mercado" />
           </label>
           <label>
-            Valor
+            <span id="transactionValueLabel">Valor em moeda de exibição</span>
             <input type="number" id="transactionValue" step="0.01" min="0" required />
           </label>
           <label>
             Forma de pagamento
             <input type="text" id="transactionPayment" placeholder="Cartão, Pix, Dinheiro" />
           </label>
+          <label>
+            Meio de pagamento
+            <select id="transactionPaymentMethod">
+              <option value="account">Conta / outro</option>
+              <option value="creditCard">Cartão de crédito</option>
+            </select>
+          </label>
+          <fieldset id="creditPurchaseFields" class="full-width credit-purchase-fields" hidden>
+            <legend>Compra no cartão</legend>
+            <div class="form-grid">
+              <label>Cartão
+                <select id="transactionCreditCard"></select>
+              </label>
+              <label>Parcelas
+                <select id="transactionInstallments">
+                  <option value="1">À vista (1x)</option>
+                </select>
+              </label>
+            </div>
+            <p class="field-help">A compra entra na fatura do ciclo, sem debitar a conta corrente neste momento.</p>
+          </fieldset>
+          <fieldset class="full-width coffer-operation-fields">
+            <legend>Vínculo com cofrinho (opcional)</legend>
+            <div class="form-grid">
+              <label>Operação
+                <select id="transactionCofferOperation">
+                  <option value="">Sem operação de cofrinho</option>
+                  <option value="deposit">Aporte / depósito</option>
+                  <option value="withdrawal">Resgate para a conta</option>
+                  <option value="purchase">Compra no Mercado Livre</option>
+                  <option value="yield">Crédito de rendimento</option>
+                </select>
+              </label>
+              <label>Cofrinho
+                <select id="transactionCoffer"></select>
+              </label>
+            </div>
+            <p class="field-help">Aportes e resgates afetam a conta; compras e rendimentos permanecem no saldo do cofrinho.</p>
+          </fieldset>
           <label>
             Status
             <select id="transactionStatus" required>
@@ -1031,6 +1375,70 @@
         <div class="modal-actions">
           <button type="button" class="secondary-button" data-close>Cancelar</button>
           <button type="submit" class="primary-button">Salvar lançamento</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="creditCardModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="creditCardModalTitle">Novo cartão</h3>
+        <button class="icon-button" type="button" data-close aria-label="Fechar cadastro de cartão"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </header>
+      <form id="creditCardForm">
+        <div class="form-grid">
+          <label>Nome do cartão
+            <input id="creditCardName" type="text" maxlength="60" required />
+          </label>
+          <label>Ícone opcional
+            <input id="creditCardIcon" type="text" maxlength="8" placeholder="💳" />
+          </label>
+          <label>Cor
+            <input id="creditCardColor" type="color" value="#2563eb" />
+          </label>
+          <label>Limite total
+            <input id="creditCardLimit" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Dia de fechamento
+            <input id="creditCardClosingDay" type="number" min="1" max="31" step="1" required />
+          </label>
+          <label>Dia de vencimento
+            <input id="creditCardDueDay" type="number" min="1" max="31" step="1" required />
+          </label>
+          <label class="checkbox-label"><input id="creditCardActive" type="checkbox" checked /> Ativo para novas compras</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar cartão</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="creditInvoicePaymentModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="creditInvoicePaymentTitle">Pagar fatura</h3>
+        <button class="icon-button" type="button" data-close aria-label="Fechar pagamento de fatura"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </header>
+      <form id="creditInvoicePaymentForm">
+        <p id="creditInvoicePaymentSummary" class="field-help"></p>
+        <label>Valor do pagamento
+          <input id="creditInvoicePaymentAmount" type="number" min="0.01" step="0.01" required />
+        </label>
+        <label>Origem do pagamento
+          <select id="creditInvoicePaymentSource">
+            <option value="account">Saldo da conta</option>
+            <option value="coffer">Cofrinho habilitado para pagamentos</option>
+          </select>
+        </label>
+        <label id="creditInvoicePaymentCofferField" hidden>Cofrinho
+          <select id="creditInvoicePaymentCoffer"></select>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Confirmar pagamento</button>
         </div>
       </form>
     </div>
@@ -1148,7 +1556,7 @@
             <select id="fixedCategory" required></select>
           </label>
           <label>
-            Valor
+            Valor (BRL)
             <input type="number" id="fixedValue" step="0.01" min="0" required />
           </label>
           <label>
@@ -1174,9 +1582,47 @@
             </select>
           </label>
         </div>
+
         <div class="modal-actions">
           <button type="button" class="secondary-button" data-close>Cancelar</button>
           <button type="submit" class="primary-button">Salvar gasto</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal" id="cofferModal" aria-hidden="true">
+    <div class="modal-content">
+      <header>
+        <h3 id="cofferModalTitle">Novo cofrinho</h3>
+        <button class="icon-button" data-close aria-label="Fechar cadastro de cofrinho"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+      </header>
+      <form id="cofferForm">
+        <div class="form-grid">
+          <label>Nome<input type="text" id="cofferName" maxlength="60" required /></label>
+          <label>Tipo
+            <select id="cofferType" required>
+              <option value="common">Cofrinho comum</option>
+              <option value="turn">Cofrinho da Virada</option>
+              <option value="marketplace">Cofrinho Mercado Livre</option>
+            </select>
+          </label>
+          <label>Ícone<input type="text" id="cofferIcon" maxlength="8" value="💰" /></label>
+          <label>Meta opcional (BRL)<input type="number" id="cofferGoal" min="0" step="0.01" /></label>
+          <label>Meta mensal de aporte (BRL)<input type="number" id="cofferMonthlyGoal" min="0" step="0.01" /></label>
+          <label>Depósito automático simulado (BRL)<input type="number" id="cofferAutomaticDeposit" min="0" step="0.01" /></label>
+          <label>Prazo em meses<input type="number" id="cofferTermMonths" min="1" max="600" step="1" /></label>
+          <label id="cofferDepositLimitField">Limite próprio de depósito (BRL)<input type="number" id="cofferDepositLimit" min="0" step="0.01" /></label>
+          <label>Principal inicial (BRL)<input type="number" id="cofferInitialPrincipal" min="0" step="0.01" value="0" /></label>
+          <label>Rendimento inicial (BRL)<input type="number" id="cofferInitialYield" min="0" step="0.01" value="0" /></label>
+          <label>Ativo<select id="cofferActive"><option value="true">Sim</option><option value="false">Não</option></select></label>
+          <label class="checkbox-label"><input type="checkbox" id="cofferPaymentEnabled" /> Habilitado para pagamentos</label>
+          <label class="checkbox-label"><input type="checkbox" id="cofferAllowWithdrawalWithoutYieldLoss" /> Permite resgate sem perda de rendimento</label>
+        </div>
+        <p id="cofferCampaignNotice" class="field-help" aria-live="polite"></p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-button" data-close>Cancelar</button>
+          <button type="submit" class="primary-button">Salvar cofrinho</button>
         </div>
       </form>
     </div>
@@ -1270,7 +1716,7 @@
           <h4 style="margin-top: 0; color: #38bdf8;">📝 Primeiros Passos</h4>
           <ul style="margin: 8px 0; padding-left: 20px;">
             <li>Clique em <strong>"Novo lançamento"</strong> para registrar despesas ou receitas</li>
-            <li>Configure seu <strong>"Saldo inicial"</strong> no topo</li>
+            <li>Configure seu <strong>"Saldo inicial"</strong> nos filtros do Dashboard</li>
             <li>Crie categorias e organize seus gastos</li>
             <li>Acompanhe suas finanças no <strong>Dashboard</strong></li>
           </ul>

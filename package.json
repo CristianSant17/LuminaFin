@@ -1,0 +1,20 @@
+{
+  "name": "luminafin",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests script.js sw.js",
+    "format": "prettier --write index.html style.css sw.js script.js src tests",
+    "check": "node --check script.js && node --check sw.js",
+    "build": "node scripts/generate-icons.mjs && node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.1",
+    "pngjs": "^7.0.0",
+    "prettier": "^3.6.2",
+    "vitest": "^4.0.13"
+  }
+}
