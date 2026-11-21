@@ -69,16 +69,19 @@ describe('Cofrinhos', () => {
     expect(result.rangeBreakdown.baseCents).toBeGreaterThan(0);
   });
 
-  it('applies the Virada bonus only below its independent balance cap', () => {
-    const coffer = makeCoffer('turn-tier', 'turn', 1000000, {
-      campaignStartDate: '2026-03-01',
-      campaignEndDate: '2026-03-31'
+  it('applies a promotional bonus only below its independent balance cap', () => {
+    const coffer = makeCoffer('promotion-tier', 'common', 1000000, {
+      promoStartDate: '2026-03-01',
+      promoEndDate: '2026-03-31',
+      bonusCdiBps: 13000,
+      bonusCapCents: 500000,
+      excessCdiBps: 10000
     });
     const result = simulateCofferYield({
       coffer,
       coffers: [coffer],
       transactions: [],
-      settings: { ...DEFAULT_COFFER_SETTINGS, annualCdiBps: 1200, turnTierCapCents: 500000 },
+      settings: { ...DEFAULT_COFFER_SETTINGS, annualCdiBps: 1200 },
       startDate: '2026-03-02',
       endDate: '2026-03-06'
     });
@@ -86,8 +89,8 @@ describe('Cofrinhos', () => {
     expect(result.rangeBreakdown.baseCents).toBeGreaterThan(0);
   });
 
-  it('keeps the Mercado Livre deposit cap separate from the shared yield tier', () => {
-    const coffer = makeCoffer('ml-1', 'marketplace', 190000, { depositLimitCents: 200000 });
+  it('keeps a custom deposit cap separate from the shared yield tier', () => {
+    const coffer = makeCoffer('custom-1', 'common', 190000, { depositLimitCents: 200000 });
     expect(() => createCofferOperation({
       coffer,
       coffers: [coffer],
@@ -99,8 +102,8 @@ describe('Cofrinhos', () => {
     })).toThrow(/limite/i);
   });
 
-  it('charges proportional yield loss on ordinary marketplace withdrawals, not checkout purchases', () => {
-    const coffer = makeCoffer('ml-1', 'marketplace', 900000, {
+  it('charges proportional yield loss on ordinary withdrawals, not checkout purchases', () => {
+    const coffer = makeCoffer('custom-1', 'common', 900000, {
       yieldCents: 100000,
       paymentEnabled: true
     });
@@ -132,8 +135,8 @@ describe('Cofrinhos', () => {
     expect(calculateCofferBalance(coffer, [purchase]).totalCents).toBe(900000);
   });
 
-  it('rejects Mercado Livre checkout purchases when payments are disabled', () => {
-    const coffer = makeCoffer('ml-disabled', 'marketplace', 100000);
+  it('rejects checkout purchases when payments are disabled', () => {
+    const coffer = makeCoffer('disabled-1', 'common', 100000);
     expect(() => createCofferOperation({
       coffer,
       coffers: [coffer],
@@ -145,15 +148,15 @@ describe('Cofrinhos', () => {
     })).toThrow(/pagamentos/i);
   });
 
-  it('transitions an active Virada coffer to common after its campaign ends', () => {
-    const coffer = makeCoffer('turn-1', 'turn', 500000);
+  it('transitions an active promotional coffer to standard after its campaign ends', () => {
+    const coffer = makeCoffer('promotion-1', 'turn', 500000);
     const transitioned = resolveCofferTransition(coffer, [], '2027-02-12');
     expect(transitioned.type).toBe('common');
     expect(transitioned.transitionedAt).toBe('2027-02-12');
   });
 
-  it('simulates post-campaign Virada yield using the common coffer rules', () => {
-    const coffer = makeCoffer('turn-1', 'turn', 500000);
+  it('simulates post-campaign yield using standard coffer rules', () => {
+    const coffer = makeCoffer('promotion-1', 'turn', 500000);
     const commonEquivalent = { ...coffer, type: 'common' };
     const result = simulateCofferYield({
       coffer,
@@ -290,13 +293,13 @@ describe('Cofrinhos', () => {
     expect(validateStateShape(state).some((issue) => /duplicado|inexistente/.test(issue))).toBe(true);
   });
 
-  it('rejects imported states with more than one Mercado Livre coffer', () => {
+  it('normalizes legacy promotional coffer types', () => {
     const state = migrateState({
       coffers: [
         makeCoffer('ml-1', 'marketplace', 0),
         makeCoffer('ml-2', 'marketplace', 0)
       ]
     });
-    expect(validateStateShape(state)).toContain('Só pode existir um Cofrinho Mercado Livre');
+    expect(state.coffers.every((coffer) => coffer.type === 'common')).toBe(true);
   });
 });

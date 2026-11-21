@@ -18,7 +18,7 @@ const COLLECTIONS = [
   'deletedItems'
 ];
 
-const COFFER_TYPES = new Set(['common', 'turn', 'marketplace']);
+const COFFER_TYPES = new Set(['common']);
 const COFFER_OPERATIONS = new Set(['opening', 'deposit', 'withdrawal', 'purchase', 'yield']);
 const TRANSACTION_STATUSES = new Set(['paid', 'pending', 'scheduled']);
 
@@ -48,10 +48,6 @@ function validCofferSettings(settings) {
     'commonBaseBps',
     'commonBonusBps',
     'commonTierCapCents',
-    'turnBonusBps',
-    'turnTierCapCents',
-    'marketplaceBonusBps',
-    'marketplaceDepositLimitCents',
     'iofBps',
     'iofMaxDays'
   ];
@@ -59,8 +55,6 @@ function validCofferSettings(settings) {
   if (settings.annualCdiBps > 100000 || settings.businessDaysPerYear < 1 || settings.businessDaysPerYear > 366) return false;
   if (typeof settings.incomeTaxEnabled !== 'boolean' || typeof settings.iofEnabled !== 'boolean') return false;
   if (typeof settings.commonRequiresMonthlyGoal !== 'boolean') return false;
-  if (!validDate(settings.turnStartDate) || !validDate(settings.turnEndDate)
-    || !validDate(settings.marketplacePromoEndDate)) return false;
   if (settings.simulationDate !== '' && !validDate(settings.simulationDate)) return false;
   if (!Array.isArray(settings.incomeTaxBrackets) || settings.incomeTaxBrackets.length === 0) return false;
   return settings.incomeTaxBrackets.every((bracket, index) => (
@@ -312,13 +306,6 @@ export function validateStateShape(state) {
     if (typeof coffer?.active !== 'boolean' || typeof coffer?.paymentEnabled !== 'boolean') {
       issues.push(`Configuração inválida no cofrinho ${coffer?.id || ''}`);
     }
-    if (coffer?.type === 'turn' && (!validDate(coffer.campaignStartDate) || !validDate(coffer.campaignEndDate))) {
-      issues.push(`Janela de campanha inválida no cofrinho ${coffer.id || ''}`);
-    }
-  }
-  if ((Array.isArray(state.coffers) ? state.coffers : [])
-    .filter((coffer) => coffer?.type === 'marketplace').length > 1) {
-    issues.push('Só pode existir um Cofrinho Mercado Livre');
   }
 
   for (const card of Array.isArray(state.creditCards) ? state.creditCards : []) {
@@ -434,6 +421,13 @@ export function validateStateShape(state) {
     if (!isText(item?.type, 40) || !item?.data || typeof item.data !== 'object') {
       issues.push(`Item inválido na lixeira ${item?.id || ''}`);
     }
+  }
+
+  if (!state.missions || typeof state.missions !== 'object'
+    || !Array.isArray(state.missions.completedIds)
+    || typeof state.missions.dismissed !== 'boolean'
+    || typeof state.missions.minimized !== 'boolean') {
+    issues.push('Estado de missões inválido');
   }
 
   return issues;

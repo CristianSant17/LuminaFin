@@ -98,6 +98,20 @@
             <button type="button" class="secondary-button" id="emptyAddInitialBalance"><i class="fa-solid fa-wallet" aria-hidden="true"></i> Informar saldo</button>
             <button type="button" class="secondary-button" id="emptyOpenCoffers"><i class="fa-solid fa-piggy-bank" aria-hidden="true"></i> Conhecer cofrinhos</button>
           </div>
+          <section class="setup-steps" aria-labelledby="setupStepsTitle">
+            <h4 id="setupStepsTitle">Primeiros passos</h4>
+            <ol>
+              <li><button type="button" data-onboarding-action="balance"><span>1</span> Saldo inicial</button></li>
+              <li><button type="button" data-onboarding-action="categories"><span>2</span> Categorias e limites</button></li>
+              <li><button type="button" data-onboarding-action="fixed"><span>3</span> Gastos fixos</button></li>
+              <li><button type="button" data-onboarding-action="cards"><span>4</span> Cartão de crédito</button></li>
+              <li><button type="button" data-onboarding-action="coffers"><span>5</span> Primeiro cofrinho</button></li>
+            </ol>
+            <div class="setup-demo">
+              <div><strong>Quer apenas explorar?</strong><p>Carregue dados demonstrativos separados dos seus dados reais.</p></div>
+              <button type="button" class="secondary-button" id="loadDemoDataButton">Carregar dados de exemplo</button>
+            </div>
+          </section>
         </div>
         <div class="chapter-tabs" role="tablist" aria-label="Capítulos do Dashboard" data-chapter-group="dashboard">
           <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="summary">Resumo</button>
@@ -345,6 +359,10 @@
           </div>
           <div style="font-size:0.92rem; color:#6b7280;">Este valor mostra a soma de todos os gastos atualmente cadastrados na lista.</div>
         </div>
+        <div class="section-empty-state" id="fixedEmptyState" hidden>
+          <div><strong>Nenhum gasto fixo cadastrado</strong><p>Comece pelo gasto recorrente ou pelo próximo passo da rotina mensal.</p></div>
+          <button type="button" class="secondary-button" id="fixedEmptyAddButton">Adicionar primeiro gasto</button>
+        </div>
         <div class="table-responsive">
           <table class="data-table" id="fixedTable">
             <thead>
@@ -370,10 +388,6 @@
             <p>Simule aportes, resgates e rendimentos. Nenhuma movimentação é enviada a instituições financeiras.</p>
           </div>
           <div class="coffer-template-actions">
-            <button type="button" class="secondary-button" data-coffer-template="dindin">Criar Dindin</button>
-            <button type="button" class="secondary-button" data-coffer-template="moto">Criar Moto</button>
-            <button type="button" class="secondary-button" data-coffer-template="turn">Cofrinho da Virada</button>
-            <button type="button" class="secondary-button" data-coffer-template="marketplace">Mercado Livre</button>
             <button type="button" class="primary-button" id="createCofferButton"><i class="fa-solid fa-plus" aria-hidden="true"></i> Novo cofrinho</button>
           </div>
         </div>
@@ -395,33 +409,6 @@
             </label>
             <label>Faixa-base (% do CDI)
               <input type="number" id="cofferCommonBase" min="0" max="1000" step="0.01" required />
-            </label>
-            <label>Comum — bônus (% do CDI)
-              <input type="number" id="cofferCommonBonus" min="0" max="1000" step="0.01" required />
-            </label>
-            <label>Comum — faixa compartilhada
-              <input type="number" id="cofferCommonCap" min="0" step="0.01" required />
-            </label>
-            <label>Virada — bônus (% do CDI)
-              <input type="number" id="cofferTurnBonus" min="0" max="1000" step="0.01" required />
-            </label>
-            <label>Virada — limite da faixa
-              <input type="number" id="cofferTurnCap" min="0" step="0.01" required />
-            </label>
-            <label>Início da campanha Virada
-              <input type="date" id="cofferTurnStart" required />
-            </label>
-            <label>Fim da campanha Virada
-              <input type="date" id="cofferTurnEnd" required />
-            </label>
-            <label>Mercado Livre — bônus (% do CDI)
-              <input type="number" id="cofferMarketplaceBonus" min="0" max="1000" step="0.01" required />
-            </label>
-            <label>Fim da taxa promocional Mercado Livre
-              <input type="date" id="cofferMarketplacePromoEnd" required />
-            </label>
-            <label>Limite de depósito Mercado Livre
-              <input type="number" id="cofferMarketplaceLimit" min="0" step="0.01" required />
             </label>
             <label>IOF configurado (%)
               <input type="number" id="cofferIofRate" min="0" max="100" step="0.01" required />
@@ -487,7 +474,10 @@
             <div class="report-empty-state" id="reportsEmptyState" hidden>
               <h3>Ainda não há lançamentos para analisar</h3>
               <p>As análises aparecem conforme receitas e despesas forem registradas. Cofrinhos e metas podem ser configurados sem afetar o livro de lançamentos.</p>
-              <button type="button" class="primary-button" id="reportsEmptyAddTransaction"><i class="fa-solid fa-plus" aria-hidden="true"></i> Registrar lançamento</button>
+              <div class="empty-state-actions">
+                <button type="button" class="primary-button" id="reportsEmptyAddTransaction"><i class="fa-solid fa-plus" aria-hidden="true"></i> Registrar lançamento</button>
+                <button type="button" class="secondary-button" id="reportsEmptyLoadDemo">Explorar com dados de exemplo</button>
+              </div>
             </div>
             <div class="chapter-tabs" id="analysisChapterTabs" role="tablist" aria-label="Capítulos da visão geral" data-chapter-group="analysis">
               <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="summary">Resumo</button>
@@ -729,12 +719,12 @@
       <section class="page-panel" id="help">
         <div class="panel-header">
           <div>
-            <h3>🆘 Tenho Dúvida - Guia Completo do LuminaFin</h3>
-            <p>Entenda tudo sobre o LuminaFin de forma simples e didática</p>
+            <h3>Tenho Dúvida</h3>
+            <p>Guia rápido dos módulos, regras financeiras e cuidados com seus dados</p>
           </div>
         </div>
 
-        <div class="help-content">
+        <div class="help-content" id="helpContent">
           <!-- Introdução -->
           <div class="help-section">
             <h4>🎯 O que é o LuminaFin?</h4>
@@ -899,10 +889,9 @@
 
           <div class="help-section">
             <h4>🐷 Cofrinhos - Saldos e Rendimentos Simulados</h4>
-            <p>Cofrinhos Comuns, da Virada e Mercado Livre mantêm principal e rendimento separados. CDI, faixas, limites, IR/IOF e datas promocionais podem ser ajustados na própria seção.</p>
+            <p>Os cofrinhos mantêm principal e rendimento separados. CDI, limites e datas promocionais podem ser ajustados em cada cadastro.</p>
             <ul>
               <li>Aportes e resgates são lançamentos vinculados que afetam o saldo da conta.</li>
-              <li>Compras no checkout do Mercado Livre reduzem apenas o cofrinho e não aplicam a perda proporcional do resgate comum.</li>
               <li>Somente operações pagas alteram saldos; pendências e agendamentos ficam fora do realizado.</li>
               <li>O rendimento é uma simulação local em dias úteis de segunda a sexta, sem calendário de feriados, e não é oferta bancária.</li>
             </ul>
@@ -1291,6 +1280,16 @@
         <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
       </header>
       <form id="transactionForm">
+        <div class="preset-suggestions" id="transactionPresetSuggestions" aria-label="Sugestões de lançamento">
+          <span class="preset-suggestions-title">Sugestões rápidas</span>
+          <div class="preset-suggestions-list">
+            <button type="button" class="suggestion-chip" data-transaction-preset="housing">Moradia / contas</button>
+            <button type="button" class="suggestion-chip" data-transaction-preset="market">Alimentação / mercado</button>
+            <button type="button" class="suggestion-chip" data-transaction-preset="salary">Renda / salário</button>
+            <button type="button" class="suggestion-chip" data-transaction-preset="cashPurchase">Compra à vista</button>
+            <button type="button" class="suggestion-chip" data-transaction-preset="installmentPurchase">Compra parcelada</button>
+          </div>
+        </div>
         <div class="form-grid">
           <label>
             Data
@@ -1349,7 +1348,7 @@
                   <option value="">Sem operação de cofrinho</option>
                   <option value="deposit">Aporte / depósito</option>
                   <option value="withdrawal">Resgate para a conta</option>
-                  <option value="purchase">Compra no Mercado Livre</option>
+                  <option value="purchase">Compra usando cofrinho</option>
                   <option value="yield">Crédito de rendimento</option>
                 </select>
               </label>
@@ -1482,6 +1481,14 @@
         <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
       </header>
       <form id="categoryForm">
+        <div class="preset-suggestions" id="categoryPresetSuggestions" aria-label="Sugestões de categorias">
+          <span class="preset-suggestions-title">Sugestões rápidas</span>
+          <div class="preset-suggestions-list">
+            <button type="button" class="suggestion-chip" data-category-preset="wellbeing">Bem-estar</button>
+            <button type="button" class="suggestion-chip" data-category-preset="education">Educação</button>
+            <button type="button" class="suggestion-chip" data-category-preset="leisure">Lazer</button>
+          </div>
+        </div>
         <div class="form-grid">
           <label>
             Nome
@@ -1546,6 +1553,14 @@
         <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
       </header>
       <form id="fixedForm">
+        <div class="preset-suggestions" id="fixedPresetSuggestions" aria-label="Sugestões de gastos fixos">
+          <span class="preset-suggestions-title">Sugestões rápidas</span>
+          <div class="preset-suggestions-list">
+            <button type="button" class="suggestion-chip" data-fixed-preset="housing">Moradia</button>
+            <button type="button" class="suggestion-chip" data-fixed-preset="utilities">Contas recorrentes</button>
+            <button type="button" class="suggestion-chip" data-fixed-preset="subscription">Assinatura</button>
+          </div>
+        </div>
         <div class="form-grid">
           <label>
             Descrição
@@ -1598,21 +1613,35 @@
         <button class="icon-button" data-close aria-label="Fechar cadastro de cofrinho"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </header>
       <form id="cofferForm">
+        <div class="preset-suggestions" id="cofferPresetSuggestions" aria-label="Perfis sugeridos de cofrinho">
+          <span class="preset-suggestions-title">Perfis sugeridos</span>
+          <div class="preset-suggestions-list">
+            <button type="button" class="suggestion-chip" data-coffer-preset="security">Reserva de segurança</button>
+            <button type="button" class="suggestion-chip" data-coffer-preset="medium">Meta de médio prazo</button>
+            <button type="button" class="suggestion-chip" data-coffer-preset="tier">Faixa de rendimento escalonado</button>
+            <button type="button" class="suggestion-chip" data-coffer-preset="purchase">Cofrinho dedicado a compras</button>
+          </div>
+        </div>
         <div class="form-grid">
           <label>Nome<input type="text" id="cofferName" maxlength="60" required /></label>
-          <label>Tipo
-            <select id="cofferType" required>
-              <option value="common">Cofrinho comum</option>
-              <option value="turn">Cofrinho da Virada</option>
-              <option value="marketplace">Cofrinho Mercado Livre</option>
-            </select>
-          </label>
           <label>Ícone<input type="text" id="cofferIcon" maxlength="8" value="💰" /></label>
           <label>Meta opcional (BRL)<input type="number" id="cofferGoal" min="0" step="0.01" /></label>
           <label>Meta mensal de aporte (BRL)<input type="number" id="cofferMonthlyGoal" min="0" step="0.01" /></label>
           <label>Depósito automático simulado (BRL)<input type="number" id="cofferAutomaticDeposit" min="0" step="0.01" /></label>
           <label>Prazo em meses<input type="number" id="cofferTermMonths" min="1" max="600" step="1" /></label>
-          <label id="cofferDepositLimitField">Limite próprio de depósito (BRL)<input type="number" id="cofferDepositLimit" min="0" step="0.01" /></label>
+          <label>Limite máximo de depósito (BRL)<input type="number" id="cofferDepositLimit" min="0" step="0.01" /></label>
+          <label>Taxa promocional (% do CDI)<input type="number" id="cofferBonusCdi" min="0" max="1000" step="0.01" value="100" /></label>
+          <label>Teto de rendimento bonificado (BRL)<input type="number" id="cofferBonusCap" min="0" step="0.01" /></label>
+          <label>Taxa após o teto (% do CDI)<input type="number" id="cofferExcessCdi" min="0" max="1000" step="0.01" value="100" /></label>
+          <label>Taxa mensal customizada (%)<input type="number" id="cofferMonthlyRate" min="0" max="100" step="0.0001" /></label>
+          <label>Início promocional<input type="date" id="cofferPromoStart" /></label>
+          <label>Fim promocional<input type="date" id="cofferPromoEnd" /></label>
+          <label>Após o prazo promocional
+            <select id="cofferPromoAfter"><option value="standard">Usar taxa padrão</option><option value="excess">Usar taxa excedente</option></select>
+          </label>
+          <label>Incidência
+            <select id="cofferAccrualMode"><option value="business">Dias úteis</option><option value="calendar">Dias corridos</option></select>
+          </label>
           <label>Principal inicial (BRL)<input type="number" id="cofferInitialPrincipal" min="0" step="0.01" value="0" /></label>
           <label>Rendimento inicial (BRL)<input type="number" id="cofferInitialYield" min="0" step="0.01" value="0" /></label>
           <label>Ativo<select id="cofferActive"><option value="true">Sim</option><option value="false">Não</option></select></label>
@@ -1739,6 +1768,14 @@
         <button class="icon-button" data-close><i class="fa-solid fa-xmark"></i></button>
       </header>
       <form id="goalForm">
+        <div class="preset-suggestions" id="goalPresetSuggestions" aria-label="Sugestões de metas">
+          <span class="preset-suggestions-title">Sugestões de meta</span>
+          <div class="preset-suggestions-list">
+            <button type="button" class="suggestion-chip" data-goal-preset="emergency">Reserva de emergência</button>
+            <button type="button" class="suggestion-chip" data-goal-preset="purchase">Objetivo de compra</button>
+            <button type="button" class="suggestion-chip" data-goal-preset="future">Projeto futuro</button>
+          </div>
+        </div>
         <div class="form-grid">
           <label>
             Nome da Meta
@@ -1761,6 +1798,35 @@
     </div>
   </div>
 
+  <button type="button" class="missions-float-button" id="missionsFloatButton" aria-controls="missionsDrawer" aria-expanded="false">
+    <i class="fa-solid fa-route" aria-hidden="true"></i>
+    <span id="missionsFloatLabel">Missões · 0/6</span>
+  </button>
+  <aside class="missions-drawer" id="missionsDrawer" aria-hidden="true" aria-label="Painel de missões">
+    <header class="missions-drawer-header">
+      <div>
+        <span class="missions-kicker">Rota de progresso</span>
+        <h3>Missões</h3>
+      </div>
+      <button type="button" class="icon-button" id="closeMissionsDrawer" aria-label="Fechar painel de missões">
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+    </header>
+    <div class="missions-progress" aria-live="polite">
+      <div><span id="missionsProgressLabel">0 de 6 concluídas</span><strong id="missionsProgressPercent">0%</strong></div>
+      <progress id="missionsProgressBar" max="6" value="0"></progress>
+    </div>
+    <div class="missions-tabs" role="tablist" aria-label="Listas de missões">
+      <button type="button" class="active" role="tab" aria-selected="true" data-missions-tab="active">Ativas</button>
+      <button type="button" role="tab" aria-selected="false" data-missions-tab="completed">Concluídas</button>
+    </div>
+    <div class="missions-content" id="missionsActiveList" role="tabpanel"></div>
+    <div class="missions-content" id="missionsCompletedList" role="tabpanel" hidden></div>
+    <footer class="missions-drawer-footer">
+      <button type="button" class="secondary-button" id="minimizeMissionsButton">Minimizar trilha</button>
+      <button type="button" class="secondary-button" id="dismissMissionsButton">Dispensar por enquanto</button>
+    </footer>
+  </aside>
   <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 </body>
 </html>
