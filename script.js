@@ -49,6 +49,10 @@ import {
   simulateLongTermSavings,
   summarizeMonthlyBudget
 } from './src/core/planning.js';
+import { COFFER_PRESETS, TRANSACTION_PRESETS, GOAL_PRESETS } from './src/core/presets.js';
+import { HELP_TOPICS } from './src/core/help.js';
+import { createDemoState } from './src/core/demo-data.js';
+import { MISSION_DEFINITIONS, deriveMissionProgress, markMissionCompleted } from './src/core/missions.js';
 
 
 const defaultSettings = {
@@ -770,6 +774,7 @@ function sanitizeHtml(str) {
 function renderAllUI(options = {}) {
   const { dashboard = true, transactions = true, categories = true, fixed = true, coffers = true, creditCards = true, reports = true, limits = true, editor = true, trash = true } = options;
   calcCache.clear();
+  syncMissionProgress();
   if (dashboard) renderDashboard();
   if (transactions) renderTransactionTable();
   if (categories) renderCategoryTable();
@@ -1202,6 +1207,7 @@ function renderPurchaseProjection() {
       scales: chartScaleOptions()
     }
   });
+    markMissionAndSave('pocket-check');
   } catch (error) {
     showToast(error.message, 'error');
   }
@@ -1634,6 +1640,149 @@ function addFocusIndicators() {
 
 // ==================== FIM ACESSIBILIDADE - PHASE 7 ====================
 
+function syncMissionProgress() {
+  state.missions = deriveMissionProgress(state);
+  renderMissionsWidget();
+}
+
+function openMissionAction(action) {
+  if (action === 'balance') {
+    openInitialBalanceModal();
+  } else if (action === 'categories') {
+    document.querySelector('.nav-link[data-target="categories"]')?.click();
+    openCategoryModal();
+  } else if (action === 'fixed') {
+    document.querySelector('.nav-link[data-target="fixed"]')?.click();
+    openFixedModal();
+  } else if (action === 'cards') {
+    document.querySelector('.nav-link[data-target="creditCards"]')?.click();
+    openCreditCardModal();
+  } else if (action === 'coffers') {
+    document.querySelector('.nav-link[data-target="coffers"]')?.click();
+    openCofferModal();
+  } else if (action === 'transaction') {
+    document.querySelector('.nav-link[data-target="transactions"]')?.click();
+    openTransactionModal();
+  } else if (action === 'pocket') {
+    document.querySelector('.nav-link[data-target="reports"]')?.click();
+    document.getElementById('projections-tab-button')?.click();
+  } else if (action === 'goal') {
+    document.querySelector('.nav-link[data-target="dashboard"]')?.click();
+    openGoalModal();
+  } else if (action === 'backup') {
+    document.querySelector('.nav-link[data-target="admin"]')?.click();
+    backupData();
+  }
+  closeMissionsDrawer();
+}
+
+function createMissionItem(mission, current = false) {
+  const item = document.createElement('article');
+  item.className = `mission-item${current ? ' current' : ''}`;
+  const copy = document.createElement('div');
+  copy.className = 'mission-item-copy';
+  const title = document.createElement('h4');
+  title.textContent = current ? `Agora: ${mission.title}` : mission.title;
+  const description = document.createElement('p');
+  description.textContent = mission.description;
+  copy.append(title, description);
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.className = current ? 'primary-button' : 'secondary-button';
+  action.textContent = 'Ir';
+  action.addEventListener('click', () => openMissionAction(mission.action));
+  item.append(copy, action);
+  return item;
+}
+
+function createCompletedMissionItem(mission) {
+  const item = document.createElement('article');
+  item.className = 'mission-item completed';
+  const copy = document.createElement('div');
+  copy.className = 'mission-item-copy';
+  const title = document.createElement('h4');
+  title.textContent = `Concluída: ${mission.title}`;
+  const description = document.createElement('p');
+  description.textContent = 'Etapa concluída e registrada no progresso.';
+  copy.append(title, description);
+  item.appendChild(copy);
+  return item;
+}
+
+function renderMissionsWidget() {
+  const progress = deriveMissionProgress(state);
+  state.missions = progress;
+  const essential = MISSION_DEFINITIONS.filter((mission) => mission.kind === 'essential');
+  const completedEssential = essential.filter((mission) => progress.completedIds.includes(mission.id));
+  const label = `${completedEssential.length}/${essential.length}`;
+  const floatLabel = document.getElementById('missionsFloatLabel');
+  if (floatLabel) floatLabel.textContent = `Missões · ${label}`;
+  const progressLabel = document.getElementById('missionsProgressLabel');
+  if (progressLabel) progressLabel.textContent = `${completedEssential.length} de ${essential.length} concluídas`;
+  const progressPercent = document.getElementById('missionsProgressPercent');
+  if (progressPercent) progressPercent.textContent = `${Math.round(completedEssential.length / essential.length * 100)}%`;
+  const progressBar = document.getElementById('missionsProgressBar');
+  if (progressBar) progressBar.value = completedEssential.length;
+  const floatButton = document.getElementById('missionsFloatButton');
+
+  const activeContainer = document.getElementById('missionsActiveList');
+  const completedContainer = document.getElementById('missionsCompletedList');
+  if (activeContainer) activeContainer.replaceChildren();
+  if (completedContainer) completedContainer.replaceChildren();
+
+  const active = MISSION_DEFINITIONS.filter((mission) => !progress.completedIds.includes(mission.id));
+  const completed = MISSION_DEFINITIONS.filter((mission) => progress.completedIds.includes(mission.id));
+  if (activeContainer) {
+    const essentialActive = active.filter((mission) => mission.kind === 'essential');
+    const routineActive = active.filter((mission) => mission.kind === 'routine');
+    essentialActive.forEach((mission, index) => activeContainer.appendChild(createMissionItem(mission, index === 0)));
+    if (routineActive.length) {
+      const separator = document.createElement('h4');
+      separator.className = 'missions-section-label';
+      separator.textContent = 'Rotina opcional';
+      activeContainer.appendChild(separator);
+      routineActive.forEach((mission) => activeContainer.appendChild(createMissionItem(mission, false)));
+    }
+  }
+  if (completedContainer) {
+    if (completed.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'field-help';
+      empty.textContent = 'As missões concluídas aparecerão aqui.';
+      completedContainer.appendChild(empty);
+    } else {
+      completed.forEach((mission) => completedContainer.appendChild(createCompletedMissionItem(mission)));
+    }
+  }
+}
+
+function openMissionsDrawer() {
+  const drawer = document.getElementById('missionsDrawer');
+  const button = document.getElementById('missionsFloatButton');
+  if (!drawer) return;
+  if (state.missions) state.missions.minimized = false;
+  drawer.classList.add('open');
+  drawer.setAttribute('aria-hidden', 'false');
+  button?.setAttribute('aria-expanded', 'true');
+  saveState();
+}
+
+function closeMissionsDrawer() {
+  const drawer = document.getElementById('missionsDrawer');
+  const button = document.getElementById('missionsFloatButton');
+  if (!drawer) return;
+  drawer.classList.remove('open');
+  drawer.setAttribute('aria-hidden', 'true');
+  button?.setAttribute('aria-expanded', 'false');
+}
+
+function markMissionAndSave(id) {
+  state = markMissionCompleted(state, id);
+  syncMissionProgress();
+  saveState();
+  renderMissionsWidget();
+}
+
 /**
  * Salva estado atual no localStorage
  * @function saveState
@@ -1643,6 +1792,7 @@ function addFocusIndicators() {
 function saveState() {
   try {
     calcCache.clear();
+    syncMissionProgress();
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (error) {
     console.error('Erro ao salvar no localStorage:', error);
@@ -2735,6 +2885,8 @@ function renderFixedTable() {
     sum + (Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))
   ), 0);
   if (dom.fixedTotalSummary) dom.fixedTotalSummary.textContent = formatCurrencyFromCents(totalFixedCents);
+  const emptyState = document.getElementById('fixedEmptyState');
+  if (emptyState) emptyState.hidden = state.fixedExpenses.length > 0;
 
   // PHASE 2: Sanitizar dados renderizados
   dom.fixedTableBody.innerHTML = state.fixedExpenses.map((item) => {
@@ -2847,15 +2999,6 @@ function populateCofferSettingsForm() {
   const values = {
     cofferCdiAnnual: (rules.annualCdiBps / 100).toFixed(2),
     cofferCommonBase: (rules.commonBaseBps / 100).toFixed(2),
-    cofferCommonBonus: (rules.commonBonusBps / 100).toFixed(2),
-    cofferCommonCap: fromCents(rules.commonTierCapCents),
-    cofferTurnBonus: (rules.turnBonusBps / 100).toFixed(2),
-    cofferTurnCap: fromCents(rules.turnTierCapCents),
-    cofferTurnStart: rules.turnStartDate,
-    cofferTurnEnd: rules.turnEndDate,
-    cofferMarketplaceBonus: (rules.marketplaceBonusBps / 100).toFixed(2),
-    cofferMarketplacePromoEnd: rules.marketplacePromoEndDate,
-    cofferMarketplaceLimit: fromCents(rules.marketplaceDepositLimitCents),
     cofferIofRate: (rules.iofBps / 100).toFixed(2),
     cofferSimulationDate: rules.simulationDate || ''
   };
@@ -2880,15 +3023,6 @@ function saveCofferSettings(event) {
     ...state.cofferSettings,
     annualCdiBps: percentBps('cofferCdiAnnual'),
     commonBaseBps: percentBps('cofferCommonBase'),
-    commonBonusBps: percentBps('cofferCommonBonus'),
-    commonTierCapCents: money('cofferCommonCap'),
-    turnBonusBps: percentBps('cofferTurnBonus'),
-    turnTierCapCents: money('cofferTurnCap'),
-    turnStartDate: document.getElementById('cofferTurnStart').value,
-    turnEndDate: document.getElementById('cofferTurnEnd').value,
-    marketplaceBonusBps: percentBps('cofferMarketplaceBonus'),
-    marketplacePromoEndDate: document.getElementById('cofferMarketplacePromoEnd').value,
-    marketplaceDepositLimitCents: money('cofferMarketplaceLimit'),
     iofBps: percentBps('cofferIofRate'),
     simulationDate: document.getElementById('cofferSimulationDate').value,
     incomeTaxEnabled: document.getElementById('cofferTaxEnabled').checked,
@@ -2921,8 +3055,80 @@ function cofferSimulationDate() {
   return state.cofferSettings?.simulationDate || dateKey(new Date());
 }
 
+function ensureAutomaticCofferYields() {
+  const endDate = cofferSimulationDate();
+  let changed = false;
+  for (const coffer of state.coffers || []) {
+    if (!coffer.active || centsFromAny(coffer.principalCents) + centsFromAny(coffer.yieldCents) <= 0) continue;
+    const startDate = coffer.createdAt?.slice(0, 10) || endDate;
+    for (let date = startDate; date <= endDate; date = addDateKey(date, 1)) {
+      if (coffer.accrualMode !== 'calendar') {
+        const parsed = normalizeDate(date);
+        if (!parsed || parsed.getDay() === 0 || parsed.getDay() === 6) continue;
+      }
+      const exists = state.transactions.some((item) =>
+        item.cofferId === coffer.id && item.cofferOperation === 'yield'
+        && item.cofferYieldAuto === true && item.date === date);
+      if (exists) continue;
+      const balance = calculateCofferBalance(coffer, state.transactions, date);
+      if (balance.totalCents <= 0) continue;
+      let grossCents = 0;
+      if (Number.isSafeInteger(coffer.monthlyRateBps) && coffer.monthlyRateBps > 0) {
+        const monthlyRate = coffer.monthlyRateBps / 10000;
+        grossCents = Math.round(balance.totalCents * (Math.pow(1 + monthlyRate, 1 / 30) - 1));
+      } else {
+        const annualCdi = state.cofferSettings.annualCdiBps / 10000;
+        const bonusBps = Number.isSafeInteger(coffer.bonusCdiBps) ? coffer.bonusCdiBps : 10000;
+        const promoActive = (!coffer.promoStartDate || date >= coffer.promoStartDate)
+          && (!coffer.promoEndDate || date <= coffer.promoEndDate);
+        const effectiveBps = promoActive ? bonusBps : (coffer.promoAfter === 'excess'
+          ? (coffer.excessCdiBps || bonusBps)
+          : 10000);
+        const eligibleCents = coffer.bonusCapCents
+          ? Math.min(balance.totalCents, coffer.bonusCapCents)
+          : balance.totalCents;
+        const excessCents = Math.max(0, balance.totalCents - eligibleCents);
+        const divisor = coffer.accrualMode === 'calendar' ? 365 : 252;
+        grossCents = Math.round(eligibleCents * (Math.pow(1 + annualCdi * effectiveBps / 10000, 1 / divisor) - 1));
+        if (excessCents > 0) {
+          grossCents += Math.round(excessCents * (Math.pow(1 + annualCdi * (coffer.excessCdiBps || 10000) / 10000, 1 / divisor) - 1));
+        }
+      }
+      if (grossCents <= 0) continue;
+      const yieldTransaction = createCofferOperation({
+        coffer,
+        coffers: state.coffers,
+        transactions: state.transactions,
+        operation: 'yield',
+        amountCents: grossCents,
+        date,
+        status: 'paid',
+        id: createId(),
+        description: `Rendimento automático · ${date}`,
+        settings: state.cofferSettings
+      });
+      yieldTransaction.cofferYieldAuto = true;
+      yieldTransaction.affectsAccountBalance = false;
+      state.transactions.push(yieldTransaction);
+      changed = true;
+    }
+  }
+  if (changed) saveState();
+}
+
+function centsFromAny(value) {
+  return Number.isSafeInteger(value) ? value : 0;
+}
+
+function addDateKey(date, days) {
+  const parsed = normalizeDate(date);
+  if (!parsed) return date;
+  return dateKey(new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate() + days));
+}
+
 function renderCoffers() {
   if (!dom.cofferList) return;
+  ensureAutomaticCofferYields();
   const asOfDate = cofferSimulationDate();
   const isSimulatedDate = asOfDate !== dateKey(new Date());
   const transitioned = state.coffers.map((coffer) => (
@@ -2944,7 +3150,7 @@ function renderCoffers() {
   if (dom.cofferYieldTotal) dom.cofferYieldTotal.textContent = formatCurrencyFromCents(totalYield);
 
   if (coffers.length === 0) {
-    dom.cofferList.innerHTML = '<div class="empty-state">Nenhum cofrinho cadastrado. Crie um cofrinho ou escolha um modelo.</div>';
+    dom.cofferList.innerHTML = '<div class="section-empty-state"><div><strong>Nenhum cofrinho cadastrado</strong><p>Escolha um perfil ou crie regras próprias. Você pode editar todos os campos depois.</p></div><button type="button" class="primary-button" data-action="create-coffer">Criar primeiro cofrinho</button></div>';
     return;
   }
 
@@ -2953,28 +3159,27 @@ function renderCoffers() {
     const rate = getCofferRateDescription(
       coffer, coffers, state.cofferSettings, asOfDate, state.transactions
     );
-    const rateLabel = rate.bonusBps > rate.baseBps
-      ? coffer.type === 'marketplace'
-        ? `${(rate.bonusBps / 100).toFixed(2)}% do CDI até ${sanitizeHtml(state.cofferSettings.marketplacePromoEndDate)}; sem teto promocional de saldo`
-        : coffer.type === 'turn'
-          ? `${(rate.bonusBps / 100).toFixed(2)}% do CDI até ${formatCurrencyFromCents(rate.tierCapCents)}; ${(rate.baseBps / 100).toFixed(0)}% no excedente`
-          : `${(rate.bonusBps / 100).toFixed(2)}% do CDI sobre ${formatCurrencyFromCents(rate.eligibleCents)} na faixa compartilhada; ${(rate.baseBps / 100).toFixed(0)}% no excedente`
+    const promotionalLabel = coffer.bonusCdiBps
+      ? `${(coffer.bonusCdiBps / 100).toFixed(2)}% do CDI`
       : `${(rate.baseBps / 100).toFixed(0)}% do CDI`;
+    const rateLabel = coffer.monthlyRateBps
+      ? `${(coffer.monthlyRateBps / 100).toFixed(4)}% ao mês`
+      : promotionalLabel;
     const goalProgress = coffer.goalCents > 0
       ? Math.min(100, Math.round(balance.totalCents / coffer.goalCents * 100))
       : null;
-    const campaignText = coffer.type === 'turn'
-      ? `Campanha: ${sanitizeHtml(coffer.campaignStartDate || state.cofferSettings.turnStartDate)} a ${sanitizeHtml(coffer.campaignEndDate || state.cofferSettings.turnEndDate)}`
-      : coffer.type === 'marketplace'
-        ? `Taxa promocional até ${sanitizeHtml(state.cofferSettings.marketplacePromoEndDate)} · limite ${formatCurrencyFromCents(coffer.depositLimitCents || state.cofferSettings.marketplaceDepositLimitCents)}`
-        : 'Faixa promocional compartilhada entre os cofrinhos comuns.';
+    const campaignText = coffer.promoStartDate || coffer.promoEndDate
+      ? `Prazo promocional: ${sanitizeHtml(coffer.promoStartDate || 'sem início')} a ${sanitizeHtml(coffer.promoEndDate || 'sem fim')} · depois ${coffer.promoAfter === 'excess' ? 'taxa excedente' : 'taxa padrão'}`
+      : coffer.depositLimitCents
+        ? `Limite máximo de depósito: ${formatCurrencyFromCents(coffer.depositLimitCents)}`
+        : 'Regras configuradas neste cofrinho.';
     const escapedId = sanitizeHtml(coffer.id);
     return `
       <article class="coffer-card">
         <div class="coffer-card-header">
           <div class="coffer-identity">
             <span class="coffer-icon" aria-hidden="true">${sanitizeHtml(coffer.icon || '💰')}</span>
-            <div><h4>${sanitizeHtml(coffer.name)}</h4><p>${coffer.type === 'common' ? 'Comum' : coffer.type === 'turn' ? 'Da Virada' : 'Mercado Livre'} · ${coffer.active ? 'Ativo' : 'Inativo'}</p></div>
+            <div><h4>${sanitizeHtml(coffer.name)}</h4><p>Personalizado · ${coffer.active ? 'Ativo' : 'Inativo'}</p></div>
           </div>
           <button type="button" class="icon-button" data-action="edit-coffer" data-id="${escapedId}" aria-label="Editar ${sanitizeHtml(coffer.name)}"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
         </div>
@@ -2986,13 +3191,12 @@ function renderCoffers() {
         ${goalProgress === null ? '' : `<div class="coffer-goal"><div><span>Meta</span><strong>${goalProgress}%</strong></div><progress max="100" value="${goalProgress}" aria-label="Progresso da meta de ${sanitizeHtml(coffer.name)}">${goalProgress}%</progress></div>`}
         <p class="coffer-rate">${rateLabel}</p>
         <p class="coffer-campaign">${campaignText}</p>
-        <p class="coffer-calculation">CDI anual: ${(state.cofferSettings.annualCdiBps / 100).toFixed(2)}% · juros em dias úteis (seg-sex), antes de IR estimado. Feriados não são descontados.</p>
-        <p class="coffer-flags">${coffer.paymentEnabled ? 'Pagamentos habilitados' : 'Pagamentos desabilitados'}${coffer.type === 'marketplace' && coffer.allowWithdrawalWithoutYieldLoss !== true ? ' · resgate comum reduz rendimento proporcionalmente' : ''}</p>
+        <p class="coffer-calculation">CDI anual: ${(state.cofferSettings.annualCdiBps / 100).toFixed(2)}% · rendimento em ${coffer.accrualMode === 'calendar' ? 'dias corridos' : 'dias úteis'}, antes de IR estimado.</p>
+        <p class="coffer-flags">${coffer.paymentEnabled ? 'Pagamentos habilitados' : 'Pagamentos desabilitados'} · ${coffer.allowWithdrawalWithoutYieldLoss ? 'resgate livre de perda proporcional' : 'resgate aplica perda proporcional de rendimento'}</p>
         ${isSimulatedDate ? `<p class="coffer-simulation-note">Data simulada: ${sanitizeHtml(asOfDate)}. A transição exibida não altera o cadastro até voltar à data real.</p>` : ''}
         <div class="coffer-actions">
           <button type="button" class="secondary-button" data-action="coffer-deposit" data-id="${escapedId}">Aportar</button>
           <button type="button" class="secondary-button" data-action="coffer-withdrawal" data-id="${escapedId}">Resgatar</button>
-          ${coffer.type === 'marketplace' ? `<button type="button" class="secondary-button" data-action="coffer-purchase" data-id="${escapedId}">Compra ML</button>` : ''}
           <button type="button" class="secondary-button" data-action="coffer-yield" data-id="${escapedId}">Crédito manual</button>
           <button type="button" class="secondary-button" data-action="simulate-coffer-yield" data-id="${escapedId}">Simular rendimento</button>
           <button type="button" class="danger-button" data-action="delete-coffer" data-id="${escapedId}" aria-label="Excluir ou arquivar ${sanitizeHtml(coffer.name)}">Excluir</button>
@@ -3062,7 +3266,7 @@ function renderCreditCards() {
   if (dom.creditOpenInvoices) dom.creditOpenInvoices.textContent = formatCurrencyFromCents(unpaidTotalCents);
 
   if (cards.length === 0) {
-    dom.creditCardList.innerHTML = '<div class="empty-state">Nenhum cartão cadastrado. Cadastre um cartão para organizar limites e faturas.</div>';
+    dom.creditCardList.innerHTML = '<div class="section-empty-state"><div><strong>Nenhum cartão cadastrado</strong><p>Informe limite, fechamento e vencimento para calcular parcelas e faturas.</p></div><button type="button" class="primary-button" data-action="create-credit-card">Cadastrar primeiro cartão</button></div>';
   } else {
     dom.creditCardList.innerHTML = usages.map(({ card, usedCents, availableCents, limitCents }) => {
       const ratio = limitCents > 0 ? Math.min(100, Math.max(0, Math.round(usedCents / limitCents * 100))) : 0;
@@ -3398,40 +3602,121 @@ function handleCreditInvoicePaymentSubmit(event) {
 }
 
 function updateCofferTypeFields() {
-  const type = document.getElementById('cofferType')?.value;
-  const limitField = document.getElementById('cofferDepositLimitField');
-  if (limitField) limitField.hidden = type !== 'marketplace';
+  return;
 }
 
-function openCofferModal(coffer = null, template = null) {
-  const defaults = {
-    dindin: { name: 'Dindin', type: 'common', icon: '💰', paymentEnabled: true },
-    moto: { name: 'Moto', type: 'common', icon: '🏍️', paymentEnabled: true },
-    turn: { name: 'Cofrinho da Virada', type: 'turn', icon: '🎆', paymentEnabled: false },
-    marketplace: { name: 'Cofrinho Mercado Livre', type: 'marketplace', icon: '🛍️', paymentEnabled: false }
+function applyCofferPreset(preset) {
+  const profile = COFFER_PRESETS[preset];
+  if (!profile) return;
+  setFormValues({
+    cofferName: profile.name,
+    cofferIcon: profile.icon,
+    cofferGoal: profile.goal,
+    cofferMonthlyGoal: profile.monthly,
+    cofferDepositLimit: '',
+    cofferBonusCdi: profile.bonusCdi,
+    cofferBonusCap: profile.bonusCap,
+    cofferExcessCdi: profile.excessCdi,
+    cofferMonthlyRate: '',
+    cofferPromoStart: '',
+    cofferPromoEnd: '',
+    cofferPromoAfter: 'standard',
+    cofferAccrualMode: profile.accrualMode,
+    cofferPaymentEnabled: profile.paymentEnabled,
+    cofferAllowWithdrawalWithoutYieldLoss: profile.allowLoss
+  });
+  showToast('Perfil aplicado. Todos os campos continuam editáveis.', 'info');
+}
+
+function applyTransactionPreset(preset) {
+  const profile = TRANSACTION_PRESETS[preset];
+  if (!profile) return;
+  setFormValues({
+    transactionType: profile.type,
+    transactionSubcategory: profile.subcategory,
+    transactionPayment: profile.payment,
+    transactionStatus: profile.status,
+    transactionPaymentMethod: profile.method,
+    transactionDescription: profile.description,
+    transactionCofferOperation: ''
+  });
+  rebuildTransactionCategoryOptions(profile.type);
+  const categorySelect = dom.transactionCategory;
+  if (categorySelect) categorySelect.value = state.categories.find((item) => item.id === profile.category)?.id || '';
+  if (profile.installments && dom.transactionInstallments) dom.transactionInstallments.value = String(profile.installments);
+  updateCofferTransactionFields();
+  updateCreditPurchaseFields();
+  showToast('Sugestão aplicada. Ajuste os valores antes de salvar.', 'info');
+}
+
+function applyFixedPreset(preset) {
+  const profiles = {
+    housing: { description: 'Moradia', category: 'moradia', day: 10, type: 'fixed' },
+    utilities: { description: 'Contas recorrentes', category: 'moradia', day: 15, type: 'fixed' },
+    subscription: { description: 'Assinatura', category: 'lazer', day: 5, type: 'fixed' }
   };
-  const preset = template ? defaults[template] : null;
-  if (template === 'marketplace' && state.coffers.some((item) => item.type === 'marketplace')) {
-    showToast('Já existe um Cofrinho Mercado Livre cadastrado.', 'warning');
-    return;
-  }
+  const profile = profiles[preset];
+  if (!profile) return;
+  setFormValues({
+    fixedDescription: profile.description,
+    fixedCategory: state.categories.find((item) => item.id === profile.category)?.id || '',
+    fixedDay: profile.day,
+    fixedType: profile.type,
+    fixedActive: 'true'
+  });
+  toggleDurationField();
+}
+
+function applyCategoryPreset(preset) {
+  const profiles = {
+    wellbeing: { name: 'Bem-estar', type: 'expense', icon: '🌿', subcategories: 'Saúde, cuidado pessoal', limit: 400 },
+    education: { name: 'Educação', type: 'expense', icon: '📚', subcategories: 'Cursos, materiais', limit: 300 },
+    leisure: { name: 'Lazer', type: 'expense', icon: '🎬', subcategories: 'Passeios, cultura', limit: 400 }
+  };
+  const profile = profiles[preset];
+  if (!profile) return;
+  setFormValues({
+    categoryName: profile.name,
+    categoryType: profile.type,
+    categoryIcon: profile.icon,
+    categorySubcategories: profile.subcategories,
+    categoryLimit: profile.limit
+  });
+}
+
+function applyGoalPreset(preset) {
+  const profile = GOAL_PRESETS[preset];
+  if (!profile) return;
+  dom.goalName.value = profile.name;
+  dom.goalTarget.value = convertBaseCentsToInputValue(toCents(profile.target)) ?? profile.target;
+  dom.goalColor.value = profile.color;
+}
+
+function openCofferModal(coffer = null) {
   openModal('cofferModal', 'cofferModalTitle', coffer ? 'Editar cofrinho' : 'Novo cofrinho');
-  const source = coffer || preset || {};
+  const presetSuggestions = document.getElementById('cofferPresetSuggestions');
+  if (presetSuggestions) presetSuggestions.hidden = Boolean(coffer);
+  const source = coffer || {};
   setFormValues({
     cofferName: source.name || '',
-    cofferType: source.type || 'common',
     cofferIcon: source.icon || '💰',
     cofferGoal: coffer ? fromCents(coffer.goalCents) : '',
     cofferMonthlyGoal: coffer ? fromCents(coffer.monthlyDepositGoalCents) : '',
     cofferAutomaticDeposit: coffer?.automaticDepositCents ? fromCents(coffer.automaticDepositCents) : '',
     cofferTermMonths: coffer?.termMonths || '',
-    cofferDepositLimit: coffer?.depositLimitCents
-      ? fromCents(coffer.depositLimitCents)
-      : fromCents(state.cofferSettings.marketplaceDepositLimitCents),
+    cofferDepositLimit: coffer?.depositLimitCents ? fromCents(coffer.depositLimitCents) : '',
+    cofferBonusCdi: coffer?.bonusCdiBps ? coffer.bonusCdiBps / 100 : 100,
+    cofferBonusCap: coffer?.bonusCapCents ? fromCents(coffer.bonusCapCents) : '',
+    cofferExcessCdi: coffer?.excessCdiBps ? coffer.excessCdiBps / 100 : 100,
+    cofferMonthlyRate: coffer?.monthlyRateBps ? coffer.monthlyRateBps / 100 : '',
+    cofferPromoStart: coffer?.promoStartDate || '',
+    cofferPromoEnd: coffer?.promoEndDate || '',
+    cofferPromoAfter: coffer?.promoAfter || 'standard',
+    cofferAccrualMode: coffer?.accrualMode || 'business',
     cofferInitialPrincipal: 0,
     cofferInitialYield: 0,
     cofferActive: coffer ? String(coffer.active) : 'true',
-    cofferPaymentEnabled: coffer ? coffer.paymentEnabled : Boolean(preset?.paymentEnabled),
+    cofferPaymentEnabled: coffer ? coffer.paymentEnabled : false,
     cofferAllowWithdrawalWithoutYieldLoss: coffer
       ? coffer.allowWithdrawalWithoutYieldLoss === true
       : source.type !== 'marketplace'
@@ -3466,28 +3751,15 @@ function handleCofferSubmit(event) {
   const existing = id ? state.coffers.find((item) => item.id === id) : null;
   const value = (field) => Number(document.getElementById(field).value || 0);
   const asCents = (field) => toCents(value(field));
-  const type = existing?.type && document.getElementById('cofferType').disabled
-    ? existing.type
-    : document.getElementById('cofferType').value;
-  const campaignStart = existing?.campaignStartDate || state.cofferSettings.turnStartDate;
-  const campaignEnd = existing?.campaignEndDate || state.cofferSettings.turnEndDate;
-  const isDuringCampaign = existing?.type === 'turn'
-    && cofferSimulationDate() >= campaignStart && cofferSimulationDate() <= campaignEnd;
-  const name = isDuringCampaign ? existing.name : document.getElementById('cofferName').value.trim();
-  const icon = isDuringCampaign ? existing.icon : document.getElementById('cofferIcon').value.trim();
+  const type = 'common';
+  const isDuringCampaign = false;
+  const name = document.getElementById('cofferName').value.trim();
+  const icon = document.getElementById('cofferIcon').value.trim();
   if (!name || name.length > 60 || !icon || Array.from(icon).length > 8 || /[<>]/.test(icon)) {
     showToast('Informe um nome e um ícone válidos.', 'error');
     return;
   }
-  if (!['common', 'turn', 'marketplace'].includes(type)) {
-    showToast('Tipo de cofrinho inválido.', 'error');
-    return;
-  }
-  if (state.coffers.some((item) => item.type === 'marketplace' && item.id !== id) && type === 'marketplace') {
-    showToast('Só é permitido um Cofrinho Mercado Livre.', 'error');
-    return;
-  }
-  const monetaryFields = ['cofferGoal', 'cofferMonthlyGoal', 'cofferAutomaticDeposit', 'cofferDepositLimit', 'cofferInitialPrincipal', 'cofferInitialYield'];
+  const monetaryFields = ['cofferGoal', 'cofferMonthlyGoal', 'cofferAutomaticDeposit', 'cofferDepositLimit', 'cofferBonusCap', 'cofferInitialPrincipal', 'cofferInitialYield'];
   if (monetaryFields.some((field) => !Number.isFinite(value(field)) || value(field) < 0)) {
     showToast('Valores monetários devem ser números não negativos.', 'error');
     return;
@@ -3506,11 +3778,15 @@ function handleCofferSubmit(event) {
     monthlyDepositGoalCents: isDuringCampaign ? existing.monthlyDepositGoalCents : asCents('cofferMonthlyGoal'),
     automaticDepositCents: isDuringCampaign ? existing.automaticDepositCents || 0 : asCents('cofferAutomaticDeposit'),
     termMonths: isDuringCampaign ? existing.termMonths || null : (value('cofferTermMonths') || null),
-    depositLimitCents: type === 'marketplace'
-      ? (asCents('cofferDepositLimit') || state.cofferSettings.marketplaceDepositLimitCents)
-      : null,
-    campaignStartDate: type === 'turn' ? campaignStart : null,
-    campaignEndDate: type === 'turn' ? campaignEnd : null,
+    depositLimitCents: asCents('cofferDepositLimit') || null,
+    bonusCdiBps: Math.round(value('cofferBonusCdi') * 100),
+    bonusCapCents: asCents('cofferBonusCap') || null,
+    excessCdiBps: Math.round(value('cofferExcessCdi') * 100),
+    monthlyRateBps: value('cofferMonthlyRate') ? Math.round(value('cofferMonthlyRate') * 100) : null,
+    promoStartDate: document.getElementById('cofferPromoStart').value || null,
+    promoEndDate: document.getElementById('cofferPromoEnd').value || null,
+    promoAfter: document.getElementById('cofferPromoAfter').value,
+    accrualMode: document.getElementById('cofferAccrualMode').value,
     principalCents: existing?.principalCents || 0,
     yieldCents: existing?.yieldCents || 0,
     createdAt: existing?.createdAt || timestamp,
@@ -3566,12 +3842,6 @@ function handleCofferSubmit(event) {
   closeModals();
   renderAllUI({ coffers: true, transactions: true, dashboard: true, reports: true, editor: true });
   showToast(existing ? 'Cofrinho atualizado.' : 'Cofrinho criado.', 'success');
-}
-
-function createCofferTemplate(event) {
-  const button = event.target.closest('[data-coffer-template]');
-  if (!button) return;
-  openCofferModal(null, button.dataset.cofferTemplate);
 }
 
 function simulateAndRecordCofferYield(cofferId) {
@@ -3711,44 +3981,72 @@ function renderReportSummary(year) {
 }
 
 function renderHelpPage() {
-  // Função para renderizar comentários dinâmicos
-  // Você pode adicionar comentários aqui conforme surgirem dúvidas
-  const comments = [
-    // Exemplo de comentário:
-    // {
-    //   title: "Como exportar dados?",
-    //   content: "Para exportar seus dados, vá na seção Administrativo e clique em 'Backup'. Isso criará um arquivo JSON com todos os seus dados.",
-    //   date: "2024-01-15"
-    // }
-    {
-      title: "Excluir vários dados de uma vez",
-      content: "Para excluir vários dados de uma vez, selecione-os utilizando a caixa de seleção e clique no botão 'Excluir Selecionados' no painel Administrativo.",
-      date: "2026-04-09"
-    },
-    {
-      title: "Backup e restauração de dados",
-      content: "Para criar um backup dos seus dados, vá na seção lateral e clique em 'Backup'. Isso criará um arquivo JSON com todos os seus dados. Para restaurar os dados, utilize o botão 'Importar backup JSON' no painel Administrativo.",
-      date: "2026-04-09"
-    },
-    {
-      title: "Os dados são armazenados localmente?",
-      content: "Sim, seus dados são armazenados localmente em seu navegador. Isso garante a privacidade e o controle sobre suas informações financeiras.",
-      date: "2026-04-09"
-    }
-  ];
+  const container = document.getElementById('helpContent');
+  if (!container) return;
 
-  const commentsContainer = document.getElementById('helpComments');
-  if (commentsContainer && comments.length > 0) {
-    const commentsHtml = comments.map(comment => `
-      <div class="comment-item" style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 12px; padding: 1rem; margin-bottom: 1rem;">
-        <h6 style="margin: 0 0 0.5rem 0; color: var(--accent);">${comment.title}</h6>
-        <p style="margin: 0 0 0.5rem 0; color: var(--text);">${comment.content}</p>
-        <small style="color: var(--muted);">${comment.date}</small>
-      </div>
-    `).join('');
+  container.replaceChildren();
+  container.className = 'help-guide';
 
-    commentsContainer.innerHTML = commentsHtml;
-  }
+  const tabs = document.createElement('div');
+  tabs.className = 'chapter-tabs help-topic-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Tópicos de ajuda');
+
+  const panel = document.createElement('section');
+  panel.className = 'help-topic-panel';
+  panel.setAttribute('role', 'tabpanel');
+
+  const renderTopic = (topicId) => {
+    const topic = HELP_TOPICS.find((item) => item.id === topicId) || HELP_TOPICS[0];
+    panel.replaceChildren();
+
+    const heading = document.createElement('h4');
+    heading.textContent = topic.title;
+    const intro = document.createElement('p');
+    intro.className = 'help-topic-intro';
+    intro.textContent = topic.intro;
+    panel.append(heading, intro);
+
+    const grid = document.createElement('div');
+    grid.className = 'help-topic-grid';
+    topic.blocks.forEach((block) => {
+      const card = document.createElement('article');
+      card.className = 'help-topic-card';
+      const title = document.createElement('h5');
+      title.textContent = block.title;
+      card.appendChild(title);
+      const list = document.createElement('ul');
+      block.items.forEach((item) => {
+        const li = document.createElement('li');
+        li.textContent = item;
+        list.appendChild(li);
+      });
+      card.appendChild(list);
+      grid.appendChild(card);
+    });
+    panel.appendChild(grid);
+
+    tabs.querySelectorAll('[role="tab"]').forEach((tab) => {
+      const active = tab.dataset.helpTab === topic.id;
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', String(active));
+    });
+  };
+
+  HELP_TOPICS.forEach((topic, index) => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = `chapter-tab${index === 0 ? ' active' : ''}`;
+    tab.dataset.helpTab = topic.id;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(index === 0));
+    tab.textContent = topic.title;
+    tab.addEventListener('click', () => renderTopic(topic.id));
+    tabs.appendChild(tab);
+  });
+
+  container.append(tabs, panel);
+  renderTopic(HELP_TOPICS[0].id);
 }
 
 function renderProjections(year) {
@@ -4273,6 +4571,36 @@ function attachEventListeners() {
     });
   });
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', closeModals));
+  document.getElementById('missionsFloatButton')?.addEventListener('click', () => {
+    if (state.missions) state.missions.dismissed = false;
+    saveState();
+    openMissionsDrawer();
+  });
+  document.getElementById('closeMissionsDrawer')?.addEventListener('click', closeMissionsDrawer);
+  document.getElementById('minimizeMissionsButton')?.addEventListener('click', () => {
+    if (state.missions) state.missions.minimized = true;
+    saveState();
+    closeMissionsDrawer();
+  });
+  document.getElementById('dismissMissionsButton')?.addEventListener('click', () => {
+    if (state.missions) state.missions.dismissed = true;
+    saveState();
+    closeMissionsDrawer();
+    renderMissionsWidget();
+    showToast('Trilha dispensada. Use "Missões" no painel lateral quando quiser reabrir.', 'info');
+  });
+  document.querySelectorAll('[data-missions-tab]').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const selected = tab.dataset.missionsTab;
+      document.querySelectorAll('[data-missions-tab]').forEach((item) => {
+        const active = item === tab;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+      });
+      document.getElementById('missionsActiveList').hidden = selected !== 'active';
+      document.getElementById('missionsCompletedList').hidden = selected !== 'completed';
+    });
+  });
   if (document.getElementById('transactionForm')) document.getElementById('transactionForm').addEventListener('submit', handleTransactionSubmit);
   if (document.getElementById('transactionType')) {
     document.getElementById('transactionType').addEventListener('change', (event) => {
@@ -4308,9 +4636,6 @@ function attachEventListeners() {
   if (document.getElementById('createCreditCardButton')) {
     document.getElementById('createCreditCardButton').addEventListener('click', () => openCreditCardModal());
   }
-  document.querySelectorAll('[data-coffer-template]').forEach((button) => {
-    button.addEventListener('click', createCofferTemplate);
-  });
   if (document.getElementById('initialBalanceForm')) {
     document.getElementById('initialBalanceForm').addEventListener('submit', handleInitialBalanceSubmit);
   }
@@ -4318,6 +4643,66 @@ function attachEventListeners() {
   if (document.getElementById('fixedForm')) document.getElementById('fixedForm').addEventListener('submit', handleFixedSubmit);
   if (document.getElementById('fixedType')) document.getElementById('fixedType').addEventListener('change', toggleDurationField);
   document.addEventListener('click', handleTableActions);
+  document.getElementById('loadDemoDataButton')?.addEventListener('click', loadDemoData);
+  document.getElementById('reportsEmptyLoadDemo')?.addEventListener('click', loadDemoData);
+  document.getElementById('fixedEmptyAddButton')?.addEventListener('click', () => openFixedModal());
+  document.querySelectorAll('[data-onboarding-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.onboardingAction;
+      if (action === 'balance') {
+        openInitialBalanceModal();
+        return;
+      }
+      if (action === 'categories') {
+        document.querySelector('.nav-link[data-target="categories"]')?.click();
+        openCategoryModal();
+        return;
+      }
+      if (action === 'fixed') {
+        document.querySelector('.nav-link[data-target="fixed"]')?.click();
+        openFixedModal();
+        return;
+      }
+      if (action === 'cards') {
+        document.querySelector('.nav-link[data-target="creditCards"]')?.click();
+        openCreditCardModal();
+        return;
+      }
+      document.querySelector('.nav-link[data-target="coffers"]')?.click();
+      openCofferModal();
+    });
+  });
+  document.addEventListener('click', (event) => {
+    const cofferPreset = event.target.closest('[data-coffer-preset]');
+    if (cofferPreset) {
+      event.preventDefault();
+      applyCofferPreset(cofferPreset.dataset.cofferPreset);
+      return;
+    }
+    const transactionPreset = event.target.closest('[data-transaction-preset]');
+    if (transactionPreset) {
+      event.preventDefault();
+      applyTransactionPreset(transactionPreset.dataset.transactionPreset);
+      return;
+    }
+    const fixedPreset = event.target.closest('[data-fixed-preset]');
+    if (fixedPreset) {
+      event.preventDefault();
+      applyFixedPreset(fixedPreset.dataset.fixedPreset);
+      return;
+    }
+    const categoryPreset = event.target.closest('[data-category-preset]');
+    if (categoryPreset) {
+      event.preventDefault();
+      applyCategoryPreset(categoryPreset.dataset.categoryPreset);
+      return;
+    }
+    const goalPreset = event.target.closest('[data-goal-preset]');
+    if (goalPreset) {
+      event.preventDefault();
+      applyGoalPreset(goalPreset.dataset.goalPreset);
+    }
+  });
   document.addEventListener('input', handleLimitInputs);
   
   // Goals event listeners
@@ -4437,6 +4822,21 @@ function openTransactionModal(transaction = null, options = {}) {
   // PHASE 3: Usar funções auxiliares para reduzir duplicação
   const modal = document.getElementById('transactionModal');
   activateModal(modal);
+  const presetSuggestions = document.getElementById('transactionPresetSuggestions');
+  if (presetSuggestions) presetSuggestions.hidden = Boolean(transaction);
+  if (dom.transactionInstallments) {
+    const selectedInstallments = String(transaction?.installmentCount || 1);
+    dom.transactionInstallments.replaceChildren(...Array.from({ length: 24 }, (_, index) => {
+      const option = document.createElement('option');
+      const count = index + 1;
+      option.value = String(count);
+      option.textContent = count === 1 ? 'À vista (1x)' : `${count}x`;
+      return option;
+    }));
+    dom.transactionInstallments.value = ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24'].includes(selectedInstallments)
+      ? selectedInstallments
+      : '1';
+  }
   const title = transaction ? 'Editar lançamento' : 'Novo lançamento';
   document.getElementById('transactionModalTitle').textContent = title;
   
@@ -4486,13 +4886,6 @@ function updateCofferTransactionFields() {
   if (isAccountTransfer) categorySelect.value = '';
   dom.transactionCoffer.disabled = !operation;
   dom.transactionCoffer.required = Boolean(operation);
-  if (operation === 'purchase' && dom.transactionCoffer.value) {
-    const coffer = state.coffers.find((item) => item.id === dom.transactionCoffer.value);
-    if (coffer?.type !== 'marketplace') {
-      const marketplaceCoffer = state.coffers.find((item) => item.type === 'marketplace');
-      if (marketplaceCoffer) dom.transactionCoffer.value = marketplaceCoffer.id;
-    }
-  }
   if (!operation) {
     typeSelect.disabled = false;
     categorySelect.disabled = false;
@@ -4590,6 +4983,9 @@ function handleTransactionSubmit(event) {
   const description = document.getElementById('transactionDescription').value.trim();
   const cofferOperation = dom.transactionCofferOperation?.value || '';
   const cofferId = dom.transactionCoffer?.value || '';
+  const paymentMethod = dom.transactionPaymentMethod?.value || 'account';
+  const creditCardId = dom.transactionCreditCard?.value || '';
+  const installmentCount = Number(dom.transactionInstallments?.value || 1);
   const existing = id ? state.transactions.find((item) => item.id === id) : null;
 
   if (existing?.cofferOperation && !cofferOperation) {
@@ -4663,7 +5059,45 @@ function handleTransactionSubmit(event) {
     return;
   }
   let record;
-  if (cofferOperation) {
+  if (!cofferOperation && paymentMethod === 'creditCard') {
+    const card = state.creditCards.find((item) => item.id === creditCardId && item.active);
+    if (!card) {
+      showToast('Selecione um cartão de crédito ativo.', 'error');
+      return;
+    }
+    if (!Number.isInteger(installmentCount) || installmentCount < 1 || installmentCount > 24) {
+      showToast('Selecione entre 1x e 24x.', 'error');
+      return;
+    }
+    if (existing?.sourceType === 'creditPurchase' && !removeUnpaidCreditPurchaseInstallments(existing.id)) {
+      showToast('Não é possível alterar uma compra parcialmente paga.', 'error');
+      return;
+    }
+    const usage = calculateCreditCardUsage(card, state.creditInstallments);
+    if (valueCents > usage.availableCents) {
+      showToast('O limite disponível do cartão é insuficiente para esta compra.', 'error');
+      return;
+    }
+    record = {
+      ...(existing || {}),
+      id: id || createId(),
+      date,
+      type: 'expense',
+      category,
+      subcategory: safeSubcategory,
+      value: valueCents / 100,
+      valueCents,
+      payment: card.name,
+      status: 'pending',
+      description: safeDescription,
+      sourceType: 'creditPurchase',
+      creditCardId: card.id,
+      installmentCount,
+      affectsAccountBalance: false,
+      accountImpactCents: 0,
+      ...fxSnapshot
+    };
+  } else if (cofferOperation) {
     const coffer = state.coffers.find((item) => item.id === cofferId);
     if (!coffer) {
       showToast('Selecione um cofrinho válido.', 'error');
@@ -4726,6 +5160,10 @@ function handleTransactionSubmit(event) {
     state.transactions.push(record);
     showToast('Lançamento adicionado com sucesso.', 'success');
   }
+  if (record.sourceType === 'creditPurchase') {
+    const card = state.creditCards.find((item) => item.id === record.creditCardId);
+    if (card) addCreditPurchaseInstallments(card, record.id, record.date, record.valueCents, record.installmentCount || 1);
+  }
   // PHASE 3: Usar função auxiliar para renderização consolidada
   calcCache.clear();
   saveState();
@@ -4737,6 +5175,8 @@ function openCategoryModal(category = null) {
   // PHASE 3: Usar funções auxiliares
   const modal = document.getElementById('categoryModal');
   activateModal(modal);
+  const presetSuggestions = document.getElementById('categoryPresetSuggestions');
+  if (presetSuggestions) presetSuggestions.hidden = Boolean(category);
   const title = category ? 'Editar categoria' : 'Nova categoria';
   document.getElementById('categoryModalTitle').textContent = title;
   
@@ -4863,6 +5303,7 @@ function handleCategorySubmit(event) {
   }
   // PHASE 3: Usar função auxiliar para renderização consolidada
   calcCache.clear();
+  state = markMissionCompleted(state, 'categories');
   saveState();
   closeAndRender({ transactions: true, categories: true, limits: true, reports: true, editor: true });
 }
@@ -4871,6 +5312,8 @@ function openFixedModal(item = null) {
   // PHASE 3: Usar funções auxiliares
   const modal = document.getElementById('fixedModal');
   activateModal(modal);
+  const presetSuggestions = document.getElementById('fixedPresetSuggestions');
+  if (presetSuggestions) presetSuggestions.hidden = Boolean(item);
   const title = item ? 'Editar gasto' : 'Novo gasto';
   document.getElementById('fixedModalTitle').textContent = title;
   
@@ -5013,6 +5456,14 @@ function handleTableActions(event) {
   if (!action) return;
   const id = action.dataset.id;
   const type = action.dataset.action;
+  if (type === 'create-coffer') {
+    openCofferModal();
+    return;
+  }
+  if (type === 'create-credit-card') {
+    openCreditCardModal();
+    return;
+  }
   if (type === 'delete-fx-rate') {
     const rate = state.fxRates.find((item) => item.id === id);
     if (!rate) return;
@@ -5198,6 +5649,28 @@ function exportReport(format) {
   }
 }
 
+function loadDemoData() {
+  performAutomaticBackup();
+  showDangerConfirmModal(
+    'Carregar dados de demonstração',
+    'Os dados atuais serão substituídos por um conjunto demonstrativo. Um backup automático será criado antes da substituição; use “Deletar TODOS os dados” em Configurações para limpar a demonstração depois.',
+    'CARREGAR DEMONSTRAÇÃO',
+    () => {
+      state = createDemoState(state);
+      saveState();
+      applyTheme();
+      populateSelects();
+      rebuildCategoryDropdowns();
+      rebuildCofferSelect();
+      rebuildCreditCardOptions();
+      renderAllUI();
+      updateRawEditor();
+      document.querySelector('.nav-link[data-target="dashboard"]')?.click();
+      showToast('Dados de demonstração carregados.', 'success');
+    }
+  );
+}
+
 function clearAllData() {
   performAutomaticBackup();
   setTimeout(() => {
@@ -5246,6 +5719,7 @@ function clearAllTransactions() {
 
 function backupData() {
   downloadBackupSnapshot(JSON.parse(JSON.stringify(state)), 'LuminaFin-backup.json');
+  markMissionAndSave('backup');
   showToast('Backup exportado com sucesso.', 'success');
 }
 
@@ -6188,6 +6662,8 @@ function renderGoals() {
 function openGoalModal(goal = null, index = -1) {
   const modal = dom.goalModal;
   activateModal(modal);
+  const presetSuggestions = document.getElementById('goalPresetSuggestions');
+  if (presetSuggestions) presetSuggestions.hidden = Boolean(goal);
   dom.goalModalTitle.textContent = goal ? 'Editar Meta' : 'Nova Meta';
   dom.goalName.value = goal ? goal.name : '';
   dom.goalTarget.value = goal
@@ -6239,6 +6715,7 @@ function saveGoal() {
     state.goals.push(goal);
   }
 
+  state = markMissionCompleted(state, 'goal');
   saveState();
   renderGoals();
   closeModals();

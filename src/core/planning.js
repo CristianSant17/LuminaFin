@@ -57,8 +57,7 @@ export function suggestCofferWithdrawals({ coffers, transactions, shortfallCents
     .map((coffer) => {
       const balance = calculateCofferBalance(coffer, transactions);
       if (balance.totalCents <= 0) return null;
-      const losesYield = coffer.type === 'marketplace'
-        && coffer.allowWithdrawalWithoutYieldLoss !== true;
+      const losesYield = coffer.allowWithdrawalWithoutYieldLoss !== true
       let grossWithdrawalCents = shortfallCents;
       if (losesYield && balance.principalCents > 0) {
         grossWithdrawalCents = Number((BigInt(shortfallCents) * BigInt(balance.totalCents)

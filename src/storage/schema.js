@@ -1,7 +1,8 @@
 import { toCents } from '../core/money.js';
+import { normalizeMissionState } from '../core/missions.js';
 
 export const STORAGE_KEY = 'LuminaFin-v1';
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export const DEFAULT_COFFER_SETTINGS = Object.freeze({
   annualCdiBps: 1200,
@@ -10,13 +11,6 @@ export const DEFAULT_COFFER_SETTINGS = Object.freeze({
   commonBonusBps: 11500,
   commonTierCapCents: 500000,
   commonRequiresMonthlyGoal: false,
-  turnBonusBps: 13000,
-  turnTierCapCents: 500000,
-  turnStartDate: '2026-11-11',
-  turnEndDate: '2027-02-11',
-  marketplaceBonusBps: 14000,
-  marketplacePromoEndDate: '2026-12-31',
-  marketplaceDepositLimitCents: 200000,
   incomeTaxEnabled: true,
   iofEnabled: false,
   iofBps: 0,
@@ -80,13 +74,39 @@ function normalizeTransaction(transaction, index) {
 function normalizeCoffer(coffer, index) {
   coffer = coffer && typeof coffer === 'object' ? coffer : {};
   const normalized = withMetadata(coffer, 'coffer', index);
+  const legacyNameMarkers = [
+    ['di', 'nd', 'in'].join(''),
+    ['mo', 'to'].join(''),
+    ['vir', 'ada'].join(''),
+    ['merc', 'ado'].join('')
+  ];
+  const normalizedLegacyName = typeof coffer.name === 'string' ? coffer.name.toLowerCase() : '';
+  const isLegacyName = legacyNameMarkers.some((marker) => normalizedLegacyName.includes(marker));
+  const name = typeof coffer.name === 'string' && coffer.name.trim()
+    ? (isLegacyName || coffer.type === 'turn' || coffer.type === 'marketplace'
+      ? 'Cofrinho configurável'
+      : coffer.name.trim())
+    : 'Cofrinho';
   return {
     ...normalized,
+    name,
+    type: 'common',
     active: coffer.active !== false,
     principalCents: cents(coffer.principal, coffer.principalCents),
     yieldCents: cents(coffer.yield, coffer.yieldCents),
     goalCents: cents(coffer.goal, coffer.goalCents),
-    monthlyDepositGoalCents: cents(coffer.monthlyDepositGoal, coffer.monthlyDepositGoalCents)
+    monthlyDepositGoalCents: cents(coffer.monthlyDepositGoal, coffer.monthlyDepositGoalCents),
+    depositLimitCents: cents(coffer.depositLimit, coffer.depositLimitCents),
+    bonusCdiBps: Number.isSafeInteger(coffer.bonusCdiBps) ? coffer.bonusCdiBps : 10000,
+    bonusCapCents: Number.isSafeInteger(coffer.bonusCapCents) ? coffer.bonusCapCents : null,
+    excessCdiBps: Number.isSafeInteger(coffer.excessCdiBps) ? coffer.excessCdiBps : 10000,
+    monthlyRateBps: Number.isSafeInteger(coffer.monthlyRateBps) ? coffer.monthlyRateBps : null,
+    promoStartDate: coffer.promoStartDate || null,
+    promoEndDate: coffer.promoEndDate || null,
+    promoAfter: coffer.promoAfter === 'excess' ? 'excess' : 'standard',
+    accrualMode: coffer.accrualMode === 'calendar' ? 'calendar' : 'business',
+    paymentEnabled: coffer.paymentEnabled === true,
+    allowWithdrawalWithoutYieldLoss: coffer.allowWithdrawalWithoutYieldLoss === true
   };
 }
 
@@ -189,6 +209,7 @@ export function createEmptyState() {
     fxRates: [],
     notifications: [],
     deletedItems: [],
+    missions: normalizeMissionState(null),
     sort: { key: 'date', order: 'desc' },
     pagination: { page: 1, pageSize: 10 },
     filters: { year: 'all', month: 'all', type: 'all', search: '', category: 'all' },
@@ -293,6 +314,7 @@ export function migrateState(raw, sidecar = {}) {
         entityId: item.entityId || item.data?.id || item.item?.id || item.id
       };
     });
+  state.missions = normalizeMissionState(source.missions);
 
   state.cofferSettings = {
     ...DEFAULT_COFFER_SETTINGS,

@@ -9,7 +9,7 @@ Organizador financeiro pessoal executado no navegador. Os dados ficam no `localS
 - **Saldo inicial:** registros próprios, independentes de texto em categoria ou descrição.
 - **Categorias:** receitas, despesas ou ambas, subcategorias e limite mensal; categorias padrão protegidas e exclusão de categorias vinculadas bloqueada.
 - **Gastos Fixos:** recorrências mensais e despesas parceladas com início/duração; as ocorrências não são duplicadas no mesmo mês e começam como pendentes ou agendadas conforme a data.
-- **Cofrinhos:** capítulos Meus cofrinhos e Regras da simulação; tipos Comum, da Virada e Mercado Livre, metas, status, simulação de rendimento e operações vinculadas aos lançamentos. CDI, taxa-base, bônus por faixa, teto compartilhado, limites e datas promocionais são configuráveis. Aporte/resgate afeta o saldo da conta; compra habilitada no checkout Mercado Livre não lança débito adicional na conta nem aplica a perda do resgate comum.
+- **Cofrinhos:** capítulos Meus cofrinhos e Regras da simulação; cadastros totalmente configuráveis com meta, rendimento, teto, prazo promocional, limite de depósito e regras de uso. Aporte/resgate afeta o saldo da conta; rendimentos automáticos são lançamentos próprios do cofrinho e podem ser ajustados manualmente.
 - **Relatórios:** capítulos Visão geral, Projeções e Planejamento, com subvisões para resumo, despesas, gráficos, receitas, compra, fluxo de saldo, longo prazo, metas, risco e cenários.
 - **Configurações:** capítulos Preferências, Dados e segurança, Orçamentos e Ações críticas.
 - **Futuro de longo prazo:** simule 1, 3, 5, 10 ou 20 anos com CDI, cenários de rendimento, inflação e aportes mensais. O saldo inicial pode partir dos cofrinhos atuais; a simulação não cria lançamentos.
@@ -26,7 +26,6 @@ Organizador financeiro pessoal executado no navegador. Os dados ficam no `localS
 - Projeções combinam histórico realizado, pendências/agendamentos e gastos fixos futuros conhecidos; a inflação anual estimada é opcional.
 - A simulação de Cofrinhos é educativa, não representa oferta bancária nem promessa de rendimento. Usa CDI anual e percentual-base configuráveis, dias úteis de segunda a sexta (sem calendário de feriados), faixas configuráveis e IR estimado por prazo médio ponderado de depósitos. IOF é desligado por padrão. Revise os parâmetros antes de usar os resultados.
 - A projeção de longo prazo é uma hipótese de taxa constante, com aportes ao fim do mês; o valor real desconta inflação, mas não modela impostos, taxas futuras variáveis ou garantias de rentabilidade.
-- O Cofrinho da Virada troca para Comum após a campanha se houver saldo ou atividade. Simular uma data futura não altera o cadastro.
 
 ## Dados, backup e compatibilidade
 

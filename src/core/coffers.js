@@ -238,8 +238,19 @@ export function simulateCofferYield({
         if (current.active === false || current.totalCents <= 0) continue;
         let currentGrossForDay = 0;
         if (current.type === 'common') {
-          const tiers = resolveCommonTierAmounts(current, currentBalances, rules.commonTierCapCents);
-          const multiplier = applicableMultiplierBps(current, rules, transactions, date);
+          const promoActive = (!current.promoStartDate || date >= current.promoStartDate)
+            && (!current.promoEndDate || date <= current.promoEndDate);
+          const customCapCents = Number.isSafeInteger(current.bonusCapCents) && current.bonusCapCents >= 0
+            ? current.bonusCapCents
+            : null;
+          const tiers = customCapCents === null
+            ? resolveCommonTierAmounts(current, currentBalances, rules.commonTierCapCents)
+            : { eligibleCents: Math.min(current.totalCents, customCapCents), excessCents: Math.max(0, current.totalCents - customCapCents) };
+          const multiplier = Number.isSafeInteger(current.bonusCdiBps)
+            ? (promoActive ? current.bonusCdiBps : (current.promoAfter === 'excess' && Number.isSafeInteger(current.excessCdiBps)
+              ? current.excessCdiBps
+              : rules.commonBaseBps))
+            : applicableMultiplierBps(current, rules, transactions, date);
           const eligibleInterest = getDailyInterestCents(
             tiers.eligibleCents,
             rules.annualCdiBps,
@@ -249,7 +260,7 @@ export function simulateCofferYield({
           const excessInterest = getDailyInterestCents(
             tiers.excessCents,
             rules.annualCdiBps,
-            rules.commonBaseBps,
+            Number.isSafeInteger(current.excessCdiBps) ? current.excessCdiBps : rules.commonBaseBps,
             rules.businessDaysPerYear
           );
           currentGrossForDay = eligibleInterest + excessInterest;
@@ -382,8 +393,8 @@ export function createCofferOperation({
   if (operation === 'opening') {
     principalDelta = amountCents;
   } else if (operation === 'deposit') {
-    const maxDeposit = coffer.type === 'marketplace'
-      ? (coffer.depositLimitCents || rules.marketplaceDepositLimitCents)
+    const maxDeposit = Number.isSafeInteger(coffer.depositLimitCents) && coffer.depositLimitCents > 0
+      ? coffer.depositLimitCents
       : null;
     if (maxDeposit !== null && balance.totalCents + amountCents > maxDeposit) {
       throw new RangeError(`Depósito excede o limite de ${maxDeposit} centavos deste cofrinho.`);
@@ -396,17 +407,13 @@ export function createCofferOperation({
       ? Math.round(amountCents * balance.principalCents / balance.totalCents)
       : 0;
     const yieldPartCents = amountCents - principalPartCents;
-    const penalized = coffer.type === 'marketplace'
-      && coffer.allowWithdrawalWithoutYieldLoss !== true;
+    const penalized = coffer.allowWithdrawalWithoutYieldLoss !== true;
     principalDelta = -principalPartCents;
     yieldDelta = -yieldPartCents;
     yieldLossCents = penalized ? yieldPartCents : 0;
     netAmountCents = amountCents - yieldLossCents;
     accountImpactCents = netAmountCents;
   } else if (operation === 'purchase') {
-    if (coffer.type !== 'marketplace') {
-      throw new Error('Compra direta no checkout é exclusiva do Cofrinho Mercado Livre.');
-    }
     if (coffer.paymentEnabled !== true) {
       throw new Error('Pagamentos estão desabilitados para este cofrinho.');
     }

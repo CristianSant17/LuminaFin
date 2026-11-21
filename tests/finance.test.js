@@ -224,7 +224,7 @@ describe('LuminaFin financial rules', () => {
     expect(projection.points).toHaveLength(1);
   });
 
-  it('sugere resgate de cofrinho e expõe perda proporcional do Mercado Livre', () => {
+  it('sugere resgate de cofrinho e expõe perda proporcional configurável', () => {
     const monthlyPosition = {
       paidIncomeCents: 0,
       safeRemainingCents: -10000,
@@ -240,8 +240,8 @@ describe('LuminaFin financial rules', () => {
       accountBalanceCents: 20000,
       monthlyPosition,
       coffers: [{
-        id: 'marketplace-1',
-        name: 'Mercado Livre',
+        id: 'custom-1',
+        name: 'Cofrinho configurável',
         type: 'marketplace',
         active: true,
         principalCents: 90000,
