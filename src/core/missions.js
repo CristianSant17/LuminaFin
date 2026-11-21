@@ -1,13 +1,19 @@
+export const MISSION_TRACKS = Object.freeze([
+  { id: 'basics', title: 'Trilha 1 — Só o básico para começar' },
+  { id: 'month', title: 'Trilha 2 — Organizar o mês' },
+  { id: 'planning', title: 'Trilha 3 — Guardar e planejar' }
+]);
+
 export const MISSION_DEFINITIONS = Object.freeze([
-  { id: 'initial-balance', title: 'Registrar o saldo inicial', description: 'Informe quanto existe na conta antes dos próximos lançamentos.', kind: 'essential', action: 'balance', section: 'dashboard' },
-  { id: 'categories', title: 'Revisar categorias e limites', description: 'Personalize a classificação ou ajuste um limite mensal.', kind: 'essential', action: 'categories', section: 'categories' },
-  { id: 'fixed-expenses', title: 'Cadastrar gastos fixos', description: 'Prepare contas recorrentes ou parcelas conhecidas do mês.', kind: 'essential', action: 'fixed', section: 'fixed' },
-  { id: 'credit-card', title: 'Configurar um cartão', description: 'Cadastre limite, fechamento e vencimento para acompanhar faturas.', kind: 'essential', action: 'cards', section: 'creditCards' },
-  { id: 'coffer', title: 'Criar o primeiro cofrinho', description: 'Separe uma reserva ou objetivo com regras próprias.', kind: 'essential', action: 'coffers', section: 'coffers' },
-  { id: 'first-transaction', title: 'Registrar o primeiro lançamento', description: 'Adicione uma entrada ou saída real para iniciar o histórico.', kind: 'essential', action: 'transaction', section: 'transactions' },
-  { id: 'pocket-check', title: 'Simular uma compra', description: 'Use “Cabe no bolso?” para testar o impacto de uma compra.', kind: 'routine', action: 'pocket', section: 'reports' },
-  { id: 'goal', title: 'Criar uma meta', description: 'Defina um objetivo de reserva ou compra.', kind: 'routine', action: 'goal', section: 'dashboard' },
-  { id: 'backup', title: 'Fazer o primeiro backup', description: 'Exporte uma cópia segura do estado atual.', kind: 'routine', action: 'backup', section: 'admin' }
+  { id: 'initial-balance', trackId: 'basics', title: 'Registrar o saldo inicial', description: 'Informe quanto existe na conta antes dos próximos lançamentos.', action: 'balance', section: 'dashboard' },
+  { id: 'first-transaction', trackId: 'basics', title: 'Adicionar o primeiro lançamento', description: 'Registre uma entrada ou saída real para iniciar seu histórico.', action: 'transaction', section: 'transactions' },
+  { id: 'dashboard-check', trackId: 'basics', title: 'Conferir o Dashboard', description: 'Veja sua posição atual e os primeiros indicadores.', action: 'dashboard', section: 'dashboard' },
+  { id: 'categories', trackId: 'month', title: 'Definir limites de categorias', description: 'Revise categorias e ajuste limites mensais para sua rotina.', action: 'categories', section: 'categories' },
+  { id: 'fixed-expenses', trackId: 'month', title: 'Cadastrar gastos fixos e boletos', description: 'Prepare contas recorrentes ou parcelas conhecidas do mês.', action: 'fixed', section: 'fixed' },
+  { id: 'credit-card', trackId: 'month', title: 'Configurar cartão de crédito', description: 'Cadastre limite, fechamento e vencimento para acompanhar faturas.', action: 'cards', section: 'creditCards' },
+  { id: 'coffer', trackId: 'planning', title: 'Criar o primeiro cofrinho', description: 'Separe uma reserva ou objetivo com regras que você pode personalizar.', action: 'coffers', section: 'coffers' },
+  { id: 'pocket-check', trackId: 'planning', title: 'Testar “Cabe no bolso?”', description: 'Simule uma compra e confira seu impacto antes de decidir.', action: 'pocket', section: 'reports' },
+  { id: 'backup', trackId: 'planning', title: 'Fazer o primeiro backup', description: 'Exporte uma cópia local dos seus dados para guardar em segurança.', action: 'backup', section: 'admin' }
 ]);
 
 export function normalizeMissionState(value) {
@@ -31,14 +37,17 @@ export function deriveMissionProgress(state) {
   if (Array.isArray(state?.creditCards) && state.creditCards.length > 0) completed.add('credit-card');
   if (Array.isArray(state?.coffers) && state.coffers.length > 0) completed.add('coffer');
   if (Array.isArray(state?.transactions) && state.transactions.some((item) => item.sourceType !== 'demo')) completed.add('first-transaction');
-  if (Array.isArray(state?.goals) && state.goals.length > 0) completed.add('goal');
-  if (Array.isArray(state?.savingsGoals) && state.savingsGoals.length > 0) completed.add('goal');
   return {
     ...missionState,
     completedIds: MISSION_DEFINITIONS
       .filter((mission) => completed.has(mission.id))
       .map((mission) => mission.id)
   };
+}
+
+export function getCurrentMission(state) {
+  const progress = deriveMissionProgress(state);
+  return MISSION_DEFINITIONS.find((mission) => !progress.completedIds.includes(mission.id)) || null;
 }
 
 export function markMissionCompleted(state, missionId) {

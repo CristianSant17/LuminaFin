@@ -40,23 +40,54 @@ import {
   applyInvoicePayment,
   buildCreditInstallmentSchedule,
   calculateCreditCardUsage,
+  filterCreditInvoices,
+  getCreditInvoiceCycles,
   getCreditInvoiceDates,
   getCreditInvoiceMonth,
   summarizeCreditInvoice
 } from './src/core/credit-cards.js';
 import {
   evaluatePurchaseDecision,
+  summarizeFinancialPosition,
   simulateLongTermSavings,
   summarizeMonthlyBudget
 } from './src/core/planning.js';
+import {
+  acceptP2PAnswer,
+  acceptP2POffer,
+  closeP2PSession,
+  createP2POffer,
+  createSyncEnvelope,
+  decodeSyncPackage,
+  encodeSyncPackage,
+  mergeSyncStates,
+  validateSyncEnvelope
+} from './src/core/device-sync.js';
+import qrcode from './node_modules/qrcode-generator/dist/qrcode.mjs';
 import { COFFER_PRESETS, TRANSACTION_PRESETS, GOAL_PRESETS } from './src/core/presets.js';
-import { HELP_TOPICS } from './src/core/help.js';
+import { filterHelpTopics, HELP_TOPICS } from './src/core/help.js';
+import {
+  BACKUP_SECTIONS,
+  createSelectiveBackup,
+  getBackupReminder,
+  getBackupSections,
+  restoreBackupSections
+} from './src/core/backup.js';
+import { formatAppVersion } from './src/core/version.js';
 import { createDemoState } from './src/core/demo-data.js';
-import { MISSION_DEFINITIONS, deriveMissionProgress, markMissionCompleted } from './src/core/missions.js';
+import {
+  MISSION_DEFINITIONS,
+  MISSION_TRACKS,
+  deriveMissionProgress,
+  getCurrentMission,
+  markMissionCompleted
+} from './src/core/missions.js';
 
 
 const defaultSettings = {
   themeMode: 'dark',
+  interfaceMode: 'essential',
+  demoMode: false,
   currency: 'BRL',
   notificationsEnabled: true,
   notifyOnLimitReached: 80,
@@ -123,6 +154,11 @@ const charts = {
 const labelsMonths = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 let deferredInstallPrompt = null;
 let activeModalTrigger = null;
+let activeSyncSession = null;
+let pendingSyncState = null;
+let syncCameraStream = null;
+let syncCameraFrame = 0;
+let syncScanTargetId = '';
 
 function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
@@ -690,6 +726,9 @@ function restoreTrashItem(trashId) {
     showToast('Não foi possível restaurar o item.', 'error');
     return;
   }
+  restored.updatedAt = new Date().toISOString();
+  restored.deletedAt = null;
+  restored.version = (restored.version || 0) + 1;
 
   const alreadyExists = [
     state.transactions,
@@ -1028,11 +1067,16 @@ function calculateCurrentBalance() {
 
 function renderFinancialPosition() {
   if (!dom.positionAccountBalance) return;
-  const accountBalanceCents = calculateCurrentBalance();
-  const cofferBalances = calculateCofferBalances(state.coffers, state.transactions);
-  const principalCents = cofferBalances.reduce((sum, item) => sum + item.principalCents, 0);
-  const yieldCents = cofferBalances.reduce((sum, item) => sum + item.yieldCents, 0);
-  const cofferTotalCents = principalCents + yieldCents;
+  const financialPosition = summarizeFinancialPosition({
+    transactions: state.transactions,
+    initialBalances: state.initialBalances || [],
+    coffers: state.coffers,
+    throughDate: dateKey(new Date())
+  });
+  const accountBalanceCents = financialPosition.accountCents;
+  const principalCents = financialPosition.principalCents;
+  const yieldCents = financialPosition.yieldCents;
+  const cofferTotalCents = financialPosition.cofferCents;
   const today = new Date();
   const unsettled = calculateUnsettledPeriodTotals(
     state.transactions,
@@ -1049,11 +1093,38 @@ function renderFinancialPosition() {
   }
   dom.positionCofferBalance.textContent = formatCurrencyFromCents(cofferTotalCents);
   dom.positionCofferComposition.textContent = `Principal ${formatCurrencyFromCents(principalCents)} · rendimento ${formatCurrencyFromCents(yieldCents)}`;
-  dom.positionNetWorth.textContent = formatCurrencyFromCents(accountBalanceCents + cofferTotalCents);
+  dom.positionNetWorth.textContent = formatCurrencyFromCents(financialPosition.netWorthCents);
   dom.positionPendingIncome.textContent = formatCurrencyFromCents(unsettled.pendingIncomeCents);
   dom.positionPendingExpense.textContent = formatCurrencyFromCents(unsettled.pendingExpenseCents);
   dom.positionScheduledIncome.textContent = formatCurrencyFromCents(unsettled.scheduledIncomeCents);
   dom.positionScheduledExpense.textContent = formatCurrencyFromCents(unsettled.scheduledExpenseCents);
+  renderDashboardCreditPosition();
+}
+
+function renderDashboardCreditPosition() {
+  const cards = state.creditCards || [];
+  const today = dateKey(new Date());
+  let currentTotalCents = 0;
+  let upcomingTotalCents = 0;
+  const dueDates = [];
+  for (const card of cards) {
+    const cycles = getCreditInvoiceCycles(card, state.creditInstallments || [], today);
+    currentTotalCents += cycles.current.totalCents;
+    upcomingTotalCents += cycles.upcoming.totalCents;
+    if (cycles.current.totalCents > 0) dueDates.push(cycles.current.dueDate);
+    if (cycles.upcoming.totalCents > 0) dueDates.push(cycles.upcoming.dueDate);
+  }
+  const nextDueDate = dueDates.sort()[0] || '';
+  const usages = cards.map((card) => calculateCreditCardUsage(card, state.creditInstallments || []));
+  const usedCents = usages.reduce((sum, item) => sum + item.usedCents, 0);
+  const availableCents = usages.reduce((sum, item) => sum + item.availableCents, 0);
+  const totalLimitCents = usages.reduce((sum, item) => sum + item.limitCents, 0);
+  if (dom.dashboardCurrentInvoices) dom.dashboardCurrentInvoices.textContent = formatCurrencyFromCents(currentTotalCents);
+  if (dom.dashboardUpcomingInvoices) dom.dashboardUpcomingInvoices.textContent = formatCurrencyFromCents(upcomingTotalCents);
+  if (dom.dashboardNextDue) dom.dashboardNextDue.textContent = nextDueDate ? `Próximo vencimento ${nextDueDate}` : 'Sem vencimentos em aberto';
+  if (dom.dashboardCreditTotal) dom.dashboardCreditTotal.textContent = formatCurrencyFromCents(totalLimitCents);
+  if (dom.dashboardCreditUsed) dom.dashboardCreditUsed.textContent = `Utilizado: ${formatCurrencyFromCents(usedCents)}`;
+  if (dom.dashboardCreditAvailable) dom.dashboardCreditAvailable.textContent = `Disponível: ${formatCurrencyFromCents(availableCents)}`;
 }
 
 /**
@@ -1104,6 +1175,7 @@ function renderPurchaseProjection() {
     const monthlyPosition = summarizeMonthlyBudget({
       transactions: state.transactions,
       fixedExpenses: state.fixedExpenses,
+      creditInstallments: state.creditInstallments,
       year,
       month
     });
@@ -1117,7 +1189,8 @@ function renderPurchaseProjection() {
       accountBalanceCents,
       monthlyPosition,
       coffers: state.coffers,
-      transactions: state.transactions
+      transactions: state.transactions,
+      cofferSettings: state.cofferSettings
     });
     const verdicts = {
       comfortable: ['Cabe com folga', 'var(--success)'],
@@ -1126,6 +1199,13 @@ function renderPurchaseProjection() {
     };
     const [verdictLabel, verdictColor] = verdicts[decision.verdict];
     const suggestedCoffer = decision.suggestedCoffer;
+    const invoiceIncomeShare = monthlyPosition.paidIncomeCents > 0
+      ? `${Math.round(monthlyPosition.creditInvoiceCents / monthlyPosition.paidIncomeCents * 100)}% da renda paga`
+      : 'sem renda paga suficiente para estimar o percentual';
+    const invoiceTrend = monthlyPosition.creditInvoiceTrendCents === 0
+      ? 'estável'
+      : `${monthlyPosition.creditInvoiceTrendCents > 0 ? 'aumento' : 'redução'} de ${formatCurrencyFromCents(Math.abs(monthlyPosition.creditInvoiceTrendCents))} no próximo ciclo`;
+    const profileSummary = `Entradas pagas: ${formatCurrencyFromCents(monthlyPosition.paidIncomeCents)}. Compromissos conhecidos: ${formatCurrencyFromCents(monthlyPosition.committedExpenseCents)}. Sobra segura estimada: ${formatCurrencyFromCents(monthlyPosition.safeRemainingCents)}. Fatura compromete ${invoiceIncomeShare}; tendência ${invoiceTrend}.`;
     const cofferAdvice = decision.cashShortfallCents > 0
       ? suggestedCoffer
         ? `<p>Faltam ${formatCurrencyFromCents(decision.cashShortfallCents)} na conta. Um resgate de ${formatCurrencyFromCents(suggestedCoffer.grossWithdrawalCents)} do cofrinho <strong>${sanitizeHtml(suggestedCoffer.name)}</strong> libera aproximadamente ${formatCurrencyFromCents(suggestedCoffer.netReceivedCents)}; perda estimada de rendimento: ${formatCurrencyFromCents(suggestedCoffer.yieldLossCents)}.</p>`
@@ -1141,10 +1221,22 @@ function renderPurchaseProjection() {
     ];
     for (let index = 0; index < futureCount; index += 1) {
       const incomeCents = toCents(incomeForecast[index]?.predicted || 0);
-      const expenseCents = toCents(expenseForecast[index]?.predicted || 0);
-      const nextInstallmentCents = index + 1 < installments ? decision.installmentCents : 0;
-      projectedAccountCents += incomeCents - expenseCents - nextInstallmentCents;
       const forecastDate = new Date(year, month + index, 1);
+      const forecastMonth = `${forecastDate.getFullYear()}-${String(forecastDate.getMonth() + 1).padStart(2, '0')}`;
+      const expenseCents = toCents(expenseForecast[index]?.predicted || 0);
+      const fixedCents = state.fixedExpenses
+        .filter((expense) => isFixedExpenseActiveInMonth(expense, forecastDate))
+        .filter((expense) => !state.transactions.some((transaction) => (
+          transaction.sourceType === 'fixedExpense'
+          && transaction.sourceId === expense.id
+          && transaction.sourceMonth === forecastMonth
+        )))
+        .reduce((sum, expense) => sum + (expense.valueCents || toCents(expense.value)), 0);
+      const invoiceCents = state.creditInstallments
+        .filter((item) => item.invoiceMonth === forecastMonth)
+        .reduce((sum, item) => sum + Math.max(0, item.amountCents - item.paidCents), 0);
+      const nextInstallmentCents = index + 1 < installments ? decision.installmentCents : 0;
+      projectedAccountCents += incomeCents - expenseCents - fixedCents - invoiceCents - nextInstallmentCents;
       flowRows.push(`<tr><th>${labelsMonths[forecastDate.getMonth()]} ${forecastDate.getFullYear()}</th><td>${formatCurrencyFromCents(projectedAccountCents)}</td><td>${formatCurrencyFromCents(nextInstallmentCents)}</td></tr>`);
     }
 
@@ -1153,6 +1245,7 @@ function renderPurchaseProjection() {
         <strong>${verdictLabel}</strong>
         <span>${installments}x de até ${formatCurrencyFromCents(decision.installmentCents)}</span>
       </div>
+      <p class="purchase-profile-summary">${sanitizeHtml(profileSummary)}</p>
       <dl class="purchase-budget-breakdown">
         <div><dt>Conta realizada hoje</dt><dd>${formatCurrencyFromCents(accountBalanceCents)}</dd></div>
         <div><dt>Receita paga no mês</dt><dd>${formatCurrencyFromCents(monthlyPosition.paidIncomeCents)}</dd></div>
@@ -1160,10 +1253,13 @@ function renderPurchaseProjection() {
         <div><dt>Boletos pendentes</dt><dd>${formatCurrencyFromCents(monthlyPosition.pendingExpenseCents)}</dd></div>
         <div><dt>Saídas agendadas</dt><dd>${formatCurrencyFromCents(monthlyPosition.scheduledExpenseCents)}</dd></div>
         <div><dt>Gastos fixos sem ocorrência</dt><dd>${formatCurrencyFromCents(monthlyPosition.ungeneratedFixedExpenseCents)}</dd></div>
+        <div><dt>Faturas e parcelas do ciclo</dt><dd>${formatCurrencyFromCents(monthlyPosition.creditInvoiceCents)}</dd></div>
+        <div><dt>Parcelas / compras à vista no cartão</dt><dd>${formatCurrencyFromCents(monthlyPosition.installmentCreditCents)} / ${formatCurrencyFromCents(monthlyPosition.singlePaymentCreditCents)}</dd></div>
         <div><dt>Sobra segura após a parcela</dt><dd>${formatCurrencyFromCents(decision.safeRemainingAfterPurchaseCents)}</dd></div>
         <div><dt>Fechamento conservador (sem entradas futuras)</dt><dd>${formatCurrencyFromCents(decision.safeMonthEndAccountAfterPurchaseCents)}</dd></div>
         <div><dt>Fechamento esperado</dt><dd>${formatCurrencyFromCents(decision.monthEndAccountAfterPurchaseCents)}</dd></div>
       </dl>
+      <p class="purchase-pending-note">Reserva em cofrinhos: ${formatCurrencyFromCents(decision.reserveCents)}, com rendimento mensal estimado de ${formatCurrencyFromCents(decision.reserveMonthlyYieldCents)}. Capacidade imediata na conta: ${formatCurrencyFromCents(decision.immediateCapacityCents)}.</p>
       <p class="purchase-pending-note">Receitas pendentes (${formatCurrencyFromCents(monthlyPosition.pendingIncomeCents)}), agendadas (${formatCurrencyFromCents(monthlyPosition.scheduledIncomeCents)}) e estimadas (${formatCurrencyFromCents(additionalIncomeCents)}) não entram na sobra segura.</p>
       ${cofferAdvice}
       <table class="purchase-flow-table"><thead><tr><th>Fluxo estimado</th><th>Saldo da conta</th><th>Parcela</th></tr></thead><tbody>${flowRows.join('')}</tbody></table>
@@ -1663,9 +1759,10 @@ function openMissionAction(action) {
   } else if (action === 'transaction') {
     document.querySelector('.nav-link[data-target="transactions"]')?.click();
     openTransactionModal();
+  } else if (action === 'dashboard') {
+    document.querySelector('.nav-link[data-target="dashboard"]')?.click();
   } else if (action === 'pocket') {
-    document.querySelector('.nav-link[data-target="reports"]')?.click();
-    document.getElementById('projections-tab-button')?.click();
+    document.getElementById('openPurchaseChecker')?.click();
   } else if (action === 'goal') {
     document.querySelector('.nav-link[data-target="dashboard"]')?.click();
     openGoalModal();
@@ -1712,37 +1809,56 @@ function createCompletedMissionItem(mission) {
 function renderMissionsWidget() {
   const progress = deriveMissionProgress(state);
   state.missions = progress;
-  const essential = MISSION_DEFINITIONS.filter((mission) => mission.kind === 'essential');
-  const completedEssential = essential.filter((mission) => progress.completedIds.includes(mission.id));
-  const label = `${completedEssential.length}/${essential.length}`;
+  const completed = MISSION_DEFINITIONS.filter((mission) => progress.completedIds.includes(mission.id));
+  const active = MISSION_DEFINITIONS.filter((mission) => !progress.completedIds.includes(mission.id));
+  const current = getCurrentMission(state);
+  const label = `${completed.length}/${MISSION_DEFINITIONS.length}`;
   const floatLabel = document.getElementById('missionsFloatLabel');
   if (floatLabel) floatLabel.textContent = `Missões · ${label}`;
   const progressLabel = document.getElementById('missionsProgressLabel');
-  if (progressLabel) progressLabel.textContent = `${completedEssential.length} de ${essential.length} concluídas`;
+  if (progressLabel) progressLabel.textContent = `${completed.length} de ${MISSION_DEFINITIONS.length} concluídas`;
   const progressPercent = document.getElementById('missionsProgressPercent');
-  if (progressPercent) progressPercent.textContent = `${Math.round(completedEssential.length / essential.length * 100)}%`;
+  if (progressPercent) progressPercent.textContent = `${Math.round(completed.length / MISSION_DEFINITIONS.length * 100)}%`;
   const progressBar = document.getElementById('missionsProgressBar');
-  if (progressBar) progressBar.value = completedEssential.length;
+  if (progressBar) {
+    progressBar.max = MISSION_DEFINITIONS.length;
+    progressBar.value = completed.length;
+  }
   const floatButton = document.getElementById('missionsFloatButton');
+  if (floatButton) floatButton.hidden = progress.dismissed;
+  const reopenButton = document.getElementById('reopenMissionsButton');
+  if (reopenButton) reopenButton.hidden = !progress.dismissed;
+  const primaryTitle = document.getElementById('missionPrimaryTitle');
+  const primaryDescription = document.getElementById('missionPrimaryDescription');
+  const primaryTrack = document.getElementById('missionPrimaryTrack');
+  const primaryAction = document.getElementById('missionPrimaryAction');
+  const primaryTrackDefinition = current && MISSION_TRACKS.find((track) => track.id === current.trackId);
+  if (primaryTitle) primaryTitle.textContent = current?.title || 'Todas as missões concluídas';
+  if (primaryDescription) primaryDescription.textContent = current?.description || 'Você já percorreu todas as trilhas. Continue usando o app no seu ritmo.';
+  if (primaryTrack) primaryTrack.textContent = primaryTrackDefinition?.title || 'LuminaFin';
+  if (primaryAction) {
+    primaryAction.hidden = !current;
+    primaryAction.onclick = current ? () => openMissionAction(current.action) : null;
+  }
 
   const activeContainer = document.getElementById('missionsActiveList');
   const completedContainer = document.getElementById('missionsCompletedList');
   if (activeContainer) activeContainer.replaceChildren();
   if (completedContainer) completedContainer.replaceChildren();
 
-  const active = MISSION_DEFINITIONS.filter((mission) => !progress.completedIds.includes(mission.id));
-  const completed = MISSION_DEFINITIONS.filter((mission) => progress.completedIds.includes(mission.id));
   if (activeContainer) {
-    const essentialActive = active.filter((mission) => mission.kind === 'essential');
-    const routineActive = active.filter((mission) => mission.kind === 'routine');
-    essentialActive.forEach((mission, index) => activeContainer.appendChild(createMissionItem(mission, index === 0)));
-    if (routineActive.length) {
-      const separator = document.createElement('h4');
-      separator.className = 'missions-section-label';
-      separator.textContent = 'Rotina opcional';
-      activeContainer.appendChild(separator);
-      routineActive.forEach((mission) => activeContainer.appendChild(createMissionItem(mission, false)));
-    }
+    if (current) activeContainer.appendChild(createMissionItem(current, true));
+    MISSION_TRACKS.forEach((track) => {
+      const remaining = active.filter((mission) => mission.trackId === track.id && mission.id !== current?.id);
+      if (!remaining.length) return;
+      const group = document.createElement('details');
+      group.className = 'mission-track-details';
+      const summary = document.createElement('summary');
+      summary.textContent = `${track.title} · ${remaining.length} próximas`;
+      group.appendChild(summary);
+      remaining.forEach((mission) => group.appendChild(createMissionItem(mission)));
+      activeContainer.appendChild(group);
+    });
   }
   if (completedContainer) {
     if (completed.length === 0) {
@@ -1751,7 +1867,17 @@ function renderMissionsWidget() {
       empty.textContent = 'As missões concluídas aparecerão aqui.';
       completedContainer.appendChild(empty);
     } else {
-      completed.forEach((mission) => completedContainer.appendChild(createCompletedMissionItem(mission)));
+      MISSION_TRACKS.forEach((track) => {
+        const finished = completed.filter((mission) => mission.trackId === track.id);
+        if (!finished.length) return;
+        const group = document.createElement('details');
+        group.className = 'mission-track-details';
+        const summary = document.createElement('summary');
+        summary.textContent = `${track.title} · ${finished.length} concluídas`;
+        group.appendChild(summary);
+        finished.forEach((mission) => group.appendChild(createCompletedMissionItem(mission)));
+        completedContainer.appendChild(group);
+      });
     }
   }
 }
@@ -1793,7 +1919,9 @@ function saveState() {
   try {
     calcCache.clear();
     syncMissionProgress();
+    state.updatedAt = new Date().toISOString();
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    renderBackupReminder();
   } catch (error) {
     console.error('Erro ao salvar no localStorage:', error);
     showToast('Erro ao salvar dados localmente.', 'error');
@@ -1873,6 +2001,11 @@ function applyTheme() {
   root.style.setProperty('--accent-strong', shadeColor(state.settings.colors.accent, -12));
   document.body.classList.toggle('theme-light', state.settings.themeMode === 'light');
   document.body.classList.toggle('theme-dark', state.settings.themeMode === 'dark');
+  const essentialMode = state.settings.interfaceMode !== 'complete';
+  document.body.classList.toggle('interface-essential', essentialMode);
+  document.querySelectorAll('[data-interface-mode]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.interfaceMode === (essentialMode ? 'essential' : 'complete')));
+  });
   dom.themeBg.value = state.settings.colors.background;
   dom.themeHeader.value = state.settings.colors.header;
   dom.themeCard.value = state.settings.colors.card;
@@ -1912,10 +2045,80 @@ function showAdminWarning() {
   }
 }
 
+const BACKUP_HISTORY_KEY = 'LuminaFin-backup-history-v1';
+const BACKUP_SNOOZE_KEY = 'LuminaFin-backup-reminder-snooze-v1';
+
+function readBackupHistory() {
+  try {
+    return JSON.parse(window.localStorage.getItem(BACKUP_HISTORY_KEY) || 'null');
+  } catch (error) {
+    console.error('Falha ao ler o histórico de backup:', error);
+    return null;
+  }
+}
+
+function renderBackupReminder() {
+  const reminder = document.getElementById('backupReminder');
+  const message = document.getElementById('backupReminderMessage');
+  if (!reminder || !message || !state) return;
+  let snoozedUntil = '';
+  try {
+    snoozedUntil = window.localStorage.getItem(BACKUP_SNOOZE_KEY) || '';
+  } catch (error) {
+    console.error('Falha ao consultar o adiamento do lembrete de backup:', error);
+  }
+  const history = readBackupHistory();
+  const reminderText = getBackupReminder({
+    lastBackupAt: history?.lastBackupAt,
+    lastBackupStateUpdatedAt: history?.stateUpdatedAt,
+    stateUpdatedAt: state.updatedAt,
+    snoozedUntil
+  });
+  reminder.hidden = !reminderText;
+  if (reminderText) message.textContent = reminderText;
+}
+
+async function loadAppVersion() {
+  try {
+    const response = await fetch(new URL('version.json', window.location.href), { cache: 'no-store' });
+    if (!response.ok) return;
+    const versionInfo = await response.json();
+    const formatted = formatAppVersion(versionInfo);
+    if (!formatted) return;
+    ['appVersionFooter', 'appVersionHelp'].forEach((id) => {
+      const element = document.getElementById(id);
+      if (!element) return;
+      element.textContent = formatted;
+      if (typeof versionInfo.builtAt === 'string') element.title = `Build: ${versionInfo.builtAt}`;
+    });
+  } catch {
+    // O fallback local permanece quando a versão remota não está disponível.
+  }
+}
+
+function snoozeBackupReminder(days) {
+  const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  try {
+    window.localStorage.setItem(BACKUP_SNOOZE_KEY, until);
+    renderBackupReminder();
+  } catch (error) {
+    console.error('Falha ao adiar o lembrete de backup:', error);
+    showToast('Não foi possível salvar o adiamento do lembrete.', 'error');
+  }
+}
+
+function selectedBackupSections() {
+  const selected = Array.from(document.querySelectorAll('[data-backup-section]:checked'))
+    .map((input) => input.dataset.backupSection);
+  if (selected.length === 0) throw new Error('Selecione ao menos uma seção.');
+  return selected;
+}
+
 function performAutomaticBackup() {
   try {
     const snapshot = JSON.parse(JSON.stringify(state));
-    downloadBackupSnapshot(snapshot, `LuminaFin-auto-backup-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`);
+    const backup = createSelectiveBackup(snapshot, BACKUP_SECTIONS.map(({ id }) => id));
+    downloadBackupSnapshot(backup, `LuminaFin-auto-backup-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}.json`);
     showToast('Backup automático do estado anterior realizado.', 'success');
   } catch (error) {
     console.error('Falha ao criar backup automático:', error);
@@ -1925,21 +2128,24 @@ function performAutomaticBackup() {
 }
 
 function downloadBackupSnapshot(snapshot, filename) {
-  const dataStr = JSON.stringify({
-    schemaVersion: SCHEMA_VERSION,
-    backupVersion: 3,
-    exportedAt: new Date().toISOString(),
-    state: snapshot
-  }, null, 2);
+  const backup = snapshot?.backupVersion
+    ? snapshot
+    : createSelectiveBackup(snapshot, BACKUP_SECTIONS.map(({ id }) => id));
+  const dataStr = JSON.stringify(backup, null, 2);
   const blob = new Blob([dataStr], { type: 'application/json;charset=utf-8;' });
   const link = document.createElement('a');
   const objectUrl = URL.createObjectURL(blob);
+  link.style.display = 'none';
   try {
     link.href = objectUrl;
     link.download = filename;
+    document.body.appendChild(link);
     link.click();
   } finally {
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+      link.remove();
+    }, 1000);
   }
 }
 
@@ -2187,6 +2393,14 @@ function init() {
     creditUsedLimit: document.getElementById('creditUsedLimit'),
     creditAvailableLimit: document.getElementById('creditAvailableLimit'),
     creditOpenInvoices: document.getElementById('creditOpenInvoices'),
+    creditInvoiceCardFilter: document.getElementById('creditInvoiceCardFilter'),
+    creditInvoiceMonthFilter: document.getElementById('creditInvoiceMonthFilter'),
+    dashboardCurrentInvoices: document.getElementById('dashboardCurrentInvoices'),
+    dashboardUpcomingInvoices: document.getElementById('dashboardUpcomingInvoices'),
+    dashboardNextDue: document.getElementById('dashboardNextDue'),
+    dashboardCreditTotal: document.getElementById('dashboardCreditTotal'),
+    dashboardCreditUsed: document.getElementById('dashboardCreditUsed'),
+    dashboardCreditAvailable: document.getElementById('dashboardCreditAvailable'),
     creditCardForm: document.getElementById('creditCardForm'),
     creditInvoicePaymentForm: document.getElementById('creditInvoicePaymentForm'),
     creditInvoicePaymentSource: document.getElementById('creditInvoicePaymentSource'),
@@ -2209,6 +2423,8 @@ function init() {
   renderTrashStatus();
   updateRawEditor();
   attachEventListeners();
+  renderBackupReminder();
+  loadAppVersion();
   
   // PHASE 7: Inicializar atalhos de teclado e acessibilidade
   keyboardShortcuts.register();
@@ -2511,14 +2727,8 @@ function renderDashboard() {
     const previousMonthBalance = calculateBalanceUpToPreviousMonth(year, month);
     let balance;
     if (year !== null && month !== null) {
-      const periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
       const periodEnd = dateKey(new Date(year, month, 0));
-      const initialBalanceInPeriod = (state.initialBalances || []).reduce((sum, item) => (
-        item.date >= periodStart && item.date <= periodEnd
-          ? sum + (Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))
-          : sum
-      ), 0);
-      balance = (previousMonthBalance || 0) + initialBalanceInPeriod + incomeTotal - expenseTotal;
+      balance = calculateAccountBalanceAt(state.transactions, state.initialBalances || [], periodEnd);
     } else if (year !== null) {
       balance = calculateAccountBalanceAt(
         state.transactions,
@@ -2575,6 +2785,10 @@ function renderDashboard() {
   const hasAnyFinancialData = state.transactions.length > 0
     || state.initialBalances.length > 0
     || hasCofferBalance;
+  const clearDemoButton = document.getElementById('clearDemoDataButton');
+  const demoModeBanner = document.getElementById('demoModeBanner');
+  if (demoModeBanner) demoModeBanner.hidden = state.settings.demoMode !== true;
+  if (clearDemoButton) clearDemoButton.hidden = state.settings.demoMode !== true;
   const hasRealizedActivity = state.transactions.some((item) => item.status === 'paid');
   dom.dashboardPage.classList.toggle('is-empty', !hasAnyFinancialData);
   dom.dashboardEmptyState.hidden = hasAnyFinancialData;
@@ -2604,6 +2818,12 @@ function renderDashboard() {
   
   renderGoals();
   buildCharts(notifyYear, notifyMonth);
+  if (state.initialBalances.length > 0
+    && state.transactions.some((item) => item.sourceType !== 'demo')
+    && document.querySelector('.nav-link[data-target="dashboard"]')?.classList.contains('active')
+    && !state.missions?.completedIds?.includes('dashboard-check')) {
+    markMissionAndSave('dashboard-check');
+  }
 }
 
 function buildCharts(year, month) {
@@ -2788,13 +3008,13 @@ function renderTransactionTable() {
         ? `Cofrinho: ${sanitizeHtml(coffer?.name || 'removido')}`
         : sanitizeHtml(item.category || '—');
     const safeSubcategory = sanitizeHtml(item.subcategory || '-');
-    const safeDescription = sanitizeHtml(item.description);
+    const safeDescription = sanitizeHtml(getTransactionDescriptionLabel(item));
     const safePayment = sanitizeHtml(item.payment || '-');
     return `<tr>
       <td>${item.date}</td>
       <td>${categoryLabel}</td>
       <td>${safeSubcategory}</td>
-      <td>${item.type === 'income' ? 'Entrada' : item.type === 'transfer' ? 'Transferência' : 'Saída'}</td>
+      <td>${item.sourceType === 'creditInvoicePayment' ? 'Saída · fatura' : item.type === 'income' ? 'Entrada' : item.type === 'transfer' ? 'Transferência' : 'Saída'}</td>
       <td>${safeDescription}</td>
       <td>${formatCurrencyFromCents(Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value))}</td>
       <td>${safePayment}</td>
@@ -2827,7 +3047,7 @@ function renderUpcomingTransactions() {
     const valueCents = Number.isSafeInteger(item.valueCents) ? item.valueCents : toCents(item.value);
     return `<article class="upcoming-row">
       <time datetime="${sanitizeHtml(item.date)}">${sanitizeHtml(item.date)}</time>
-      <div class="upcoming-description"><strong>${sanitizeHtml(item.description)}</strong><span>${sanitizeHtml(detail)}</span></div>
+      <div class="upcoming-description"><strong>${sanitizeHtml(getTransactionDescriptionLabel(item))}</strong><span>${sanitizeHtml(detail)}</span></div>
       <span class="status-pill status-${sanitizeHtml(item.status)}">${sanitizeHtml(formatStatus(item.status))}</span>
       <strong class="upcoming-value">${item.type === 'expense' ? '−' : '+'}${formatCurrencyFromCents(valueCents)}</strong>
     </article>`;
@@ -3251,6 +3471,7 @@ function renderCreditCards() {
   if (!dom.creditCardList) return;
   const cards = state.creditCards || [];
   rebuildCreditCardOptions();
+  renderDashboardCreditPosition();
   const usages = cards.map((card) => ({
     card,
     ...calculateCreditCardUsage(card, state.creditInstallments || [])
@@ -3270,9 +3491,12 @@ function renderCreditCards() {
   } else {
     dom.creditCardList.innerHTML = usages.map(({ card, usedCents, availableCents, limitCents }) => {
       const ratio = limitCents > 0 ? Math.min(100, Math.max(0, Math.round(usedCents / limitCents * 100))) : 0;
-      const cardInvoices = summaries.filter((invoice) => invoice.cardId === card.id && invoice.remainingCents > 0)
-        .sort((left, right) => left.invoiceMonth.localeCompare(right.invoiceMonth));
-      const nextInvoice = cardInvoices[0];
+      const cycles = getCreditInvoiceCycles(card, state.creditInstallments || [], dateKey(new Date()));
+      const currentInvoice = state.creditInvoices.find((invoice) => invoice.cardId === card.id
+        && invoice.invoiceMonth === cycles.current.invoiceMonth);
+      const currentSummary = currentInvoice ? getCreditInvoiceSummary(currentInvoice) : null;
+      const currentLines = renderCreditCycleLines(cycles.current.items);
+      const nextLines = renderCreditCycleLines(cycles.upcoming.items);
       const escapedId = sanitizeHtml(card.id);
       return `<article class="credit-card-item" style="--credit-card-color:${sanitizeHtml(card.color)}">
         <div class="credit-card-item-header">
@@ -3283,12 +3507,27 @@ function renderCreditCards() {
         <div class="credit-limit-values"><span>Utilizado <strong>${formatCurrencyFromCents(usedCents)}</strong></span><span>Disponível <strong>${formatCurrencyFromCents(availableCents)}</strong></span></div>
         <progress max="100" value="${ratio}" aria-label="${ratio}% do limite utilizado">${ratio}%</progress>
         <p>Limite total: ${formatCurrencyFromCents(limitCents)} · fecha dia ${card.closingDay} · vence dia ${card.dueDay}</p>
-        <p>${nextInvoice ? `Próxima fatura: ${formatCurrencyFromCents(nextInvoice.remainingCents)} · vence ${sanitizeHtml(nextInvoice.dueDate)}` : 'Sem faturas pendentes.'}</p>
+        <div class="credit-cycle-card">
+          <div class="credit-cycle-summary">
+            <div><span>Fatura atual · ${sanitizeHtml(cycles.current.invoiceMonth)}</span><strong>${formatCurrencyFromCents(cycles.current.totalCents)}</strong><small>Fecha ${sanitizeHtml(cycles.current.closingDate)} · vence ${sanitizeHtml(cycles.current.dueDate)}</small></div>
+            ${currentInvoice && currentSummary?.remainingCents > 0
+              ? `<div class="invoice-payment-actions"><button type="button" class="primary-button small" data-action="pay-credit-invoice" data-mode="full" data-id="${sanitizeHtml(currentInvoice.id)}">Pagar completa</button><button type="button" class="secondary-button small" data-action="pay-credit-invoice" data-mode="partial" data-id="${sanitizeHtml(currentInvoice.id)}">Pagar parcial</button></div>`
+              : ''}
+          </div>
+          <ul>${currentLines}</ul>
+        </div>
+        <div class="credit-cycle-card upcoming">
+          <div><span>Próxima fatura · ${sanitizeHtml(cycles.upcoming.invoiceMonth)}</span><strong>${formatCurrencyFromCents(cycles.upcoming.totalCents)}</strong><small>Fecha ${sanitizeHtml(cycles.upcoming.closingDate)} · vence ${sanitizeHtml(cycles.upcoming.dueDate)}</small></div>
+          <ul>${nextLines}</ul>
+        </div>
       </article>`;
     }).join('');
   }
 
-  const sortedInvoices = summaries.sort((left, right) => (
+  rebuildCreditInvoiceFilters(cards);
+  const selectedCardId = dom.creditInvoiceCardFilter?.value || '';
+  const selectedMonth = dom.creditInvoiceMonthFilter?.value || '';
+  const sortedInvoices = filterCreditInvoices(summaries, selectedCardId, selectedMonth).sort((left, right) => (
     left.dueDate.localeCompare(right.dueDate)
       || left.cardId.localeCompare(right.cardId)
   ));
@@ -3302,15 +3541,60 @@ function renderCreditCards() {
     const statusLabel = invoice.status === 'paid' ? 'Paga' : invoice.status === 'closed' ? 'Fechada' : 'Aberta';
     const lines = items.map((item) => {
       const purchase = state.transactions.find((transaction) => transaction.id === item.purchaseId);
-      return `<li><span>${sanitizeHtml(purchase?.description || 'Compra removida')} · ${item.installmentNumber}/${item.installmentCount}</span><strong>${formatCurrencyFromCents(item.amountCents - item.paidCents)}</strong></li>`;
+      return `<li><span>${sanitizeHtml(creditPurchaseLabel(purchase))} · ${item.installmentNumber}/${item.installmentCount}</span><strong>${formatCurrencyFromCents(item.amountCents - item.paidCents)}</strong></li>`;
     }).join('');
     return `<article class="credit-invoice-item">
       <header><div><h4>${sanitizeHtml(card?.name || 'Cartão removido')} · ${sanitizeHtml(invoice.invoiceMonth)}</h4><p>Fechamento ${sanitizeHtml(invoice.closingDate)} · vencimento ${sanitizeHtml(invoice.dueDate)}</p></div><span class="invoice-status invoice-status--${invoice.status}">${statusLabel}</span></header>
       <ul>${lines}</ul>
       <div class="credit-invoice-total"><span>${invoice.paidCents ? `Pago ${formatCurrencyFromCents(invoice.paidCents)} · saldo restante` : 'Total da fatura'}</span><strong>${formatCurrencyFromCents(invoice.remainingCents)}</strong></div>
-      ${invoice.remainingCents > 0 ? `<button type="button" class="primary-button" data-action="pay-credit-invoice" data-id="${sanitizeHtml(invoice.id)}">Pagar fatura</button>` : ''}
+      ${invoice.remainingCents > 0 ? `<div class="invoice-payment-actions"><button type="button" class="primary-button" data-action="pay-credit-invoice" data-mode="full" data-id="${sanitizeHtml(invoice.id)}">Pagar fatura completa</button><button type="button" class="secondary-button" data-action="pay-credit-invoice" data-mode="partial" data-id="${sanitizeHtml(invoice.id)}">Pagamento parcial</button></div>` : ''}
     </article>`;
   }).join('');
+}
+
+function creditPurchaseLabel(purchase) {
+  if (!purchase) return 'Compra removida';
+  return getTransactionDescriptionLabel(purchase);
+}
+
+function getTransactionDescriptionLabel(transaction) {
+  return transaction?.description?.trim()
+    || [getCategory(transaction?.category)?.name, transaction?.subcategory].filter(Boolean).join(' · ')
+    || 'Sem descrição';
+}
+
+function renderCreditCycleLines(items) {
+  if (!items.length) return '<li class="credit-cycle-empty">Nenhuma parcela neste ciclo.</li>';
+  return items.map((item) => {
+    const purchase = state.transactions.find((transaction) => transaction.id === item.purchaseId);
+    return `<li><span>${sanitizeHtml(creditPurchaseLabel(purchase))} · ${item.installmentNumber}/${item.installmentCount}</span><strong>${formatCurrencyFromCents(item.remainingCents)}</strong></li>`;
+  }).join('');
+}
+
+function rebuildCreditInvoiceFilters(cards) {
+  const selectedCard = dom.creditInvoiceCardFilter?.value || '';
+  const selectedMonth = dom.creditInvoiceMonthFilter?.value || '';
+  const createOption = (label, value) => {
+    const option = document.createElement('option');
+    option.textContent = label;
+    option.value = value;
+    return option;
+  };
+  if (dom.creditInvoiceCardFilter) {
+    const options = [createOption('Todos os cartões', '')];
+    cards.forEach((card) => options.push(createOption(card.name, card.id)));
+    dom.creditInvoiceCardFilter.replaceChildren(...options);
+    if (cards.some((card) => card.id === selectedCard)) dom.creditInvoiceCardFilter.value = selectedCard;
+  }
+  if (dom.creditInvoiceMonthFilter) {
+    const months = [...new Set((state.creditInvoices || []).map((invoice) => invoice.invoiceMonth))]
+      .filter(Boolean)
+      .sort((left, right) => right.localeCompare(left));
+    const options = [createOption('Todos os ciclos', '')];
+    months.forEach((month) => options.push(createOption(month, month)));
+    dom.creditInvoiceMonthFilter.replaceChildren(...options);
+    if (months.includes(selectedMonth)) dom.creditInvoiceMonthFilter.value = selectedMonth;
+  }
 }
 
 function rebuildCreditCardOptions(select = dom.transactionCreditCard, selectedId = '', activeOnly = true) {
@@ -3367,6 +3651,7 @@ function updateCreditPurchaseFields() {
   if (dom.transactionCreditCard) {
     dom.transactionCreditCard.required = isCreditPurchase;
     if (isCreditPurchase) rebuildCreditCardOptions(dom.transactionCreditCard, dom.transactionCreditCard.value);
+    else dom.transactionCreditCard.value = '';
   }
   if (dom.transactionInstallments) dom.transactionInstallments.required = isCreditPurchase;
 }
@@ -3478,7 +3763,7 @@ function addCreditPurchaseInstallments(card, purchaseId, purchaseDate, amountCen
   for (const invoice of invoiceByMonth.values()) refreshCreditInvoice(invoice);
 }
 
-function openCreditInvoicePayment(invoiceId) {
+function openCreditInvoicePayment(invoiceId, mode = 'partial') {
   const invoice = state.creditInvoices.find((item) => item.id === invoiceId);
   if (!invoice) return;
   const summary = getCreditInvoiceSummary(invoice);
@@ -3486,8 +3771,14 @@ function openCreditInvoicePayment(invoiceId) {
   const card = state.creditCards.find((item) => item.id === invoice.cardId);
   document.getElementById('creditInvoicePaymentTitle').textContent = 'Pagar fatura';
   document.getElementById('creditInvoicePaymentSummary').textContent = `${card?.name || 'Cartão'} · ${invoice.invoiceMonth} · saldo ${formatCurrencyFromCents(summary.remainingCents)} · vence ${invoice.dueDate}`;
-  document.getElementById('creditInvoicePaymentAmount').value =
-    convertBaseCentsToInputValue(summary.remainingCents, invoice.dueDate) ?? fromCents(summary.remainingCents);
+  const amountInput = document.getElementById('creditInvoicePaymentAmount');
+  amountInput.value = mode === 'full'
+    ? (convertBaseCentsToInputValue(summary.remainingCents) ?? fromCents(summary.remainingCents))
+    : '';
+  amountInput.max = fromCents(summary.remainingCents);
+  const paymentDateInput = document.getElementById('creditInvoicePaymentDate');
+  paymentDateInput.value = dateKey(new Date());
+  paymentDateInput.max = dateKey(new Date());
   const source = dom.creditInvoicePaymentSource;
   source.value = 'account';
   const cofferSelect = dom.creditInvoicePaymentCoffer;
@@ -3525,13 +3816,19 @@ function handleCreditInvoicePaymentSubmit(event) {
   }
   const summary = getCreditInvoiceSummary(invoice);
   const enteredAmount = Number(document.getElementById('creditInvoicePaymentAmount').value);
-  const amountCents = convertInputAmountToBaseCents(enteredAmount, dateKey(new Date()));
+  const paymentDate = document.getElementById('creditInvoicePaymentDate').value;
+  const amountCents = convertInputAmountToBaseCents(enteredAmount, paymentDate);
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > summary.remainingCents) {
     showToast(`Informe um pagamento entre R$ 0,01 e ${formatCurrencyFromCents(summary.remainingCents)}.`, 'error');
     return;
   }
+  if (!normalizeDate(paymentDate) || paymentDate > dateKey(new Date())) {
+    showToast('Informe uma data válida que não esteja no futuro.', 'error');
+    return;
+  }
   const source = dom.creditInvoicePaymentSource.value;
-  if (source === 'account' && calculateCurrentBalance() < amountCents) {
+  if (source === 'account'
+    && calculateAccountBalanceAt(state.transactions, state.initialBalances || [], paymentDate) < amountCents) {
     showToast('Saldo realizado insuficiente para este pagamento. Escolha um valor parcial ou outra origem.', 'error');
     return;
   }
@@ -3549,9 +3846,9 @@ function handleCreditInvoicePaymentSubmit(event) {
         coffer,
         coffers: state.coffers,
         transactions: state.transactions,
-        operation: 'withdrawal',
+        operation: 'purchase',
         amountCents,
-        date: dateKey(new Date()),
+        date: paymentDate,
         status: 'paid',
         id: paymentId,
         description: `Pagamento fatura ${invoice.invoiceMonth}`,
@@ -3563,6 +3860,7 @@ function handleCreditInvoicePaymentSubmit(event) {
     }
     payment.accountImpactCents = 0;
     payment.affectsAccountBalance = false;
+    payment.type = 'transfer';
     payment.sourceType = 'creditInvoicePayment';
     payment.creditInvoiceId = invoice.id;
     payment.creditCardId = invoice.cardId;
@@ -3571,7 +3869,7 @@ function handleCreditInvoicePaymentSubmit(event) {
   } else {
     payment = {
       id: paymentId,
-      date: dateKey(new Date()),
+      date: paymentDate,
       type: 'transfer',
       status: 'paid',
       valueCents: amountCents,
@@ -3935,7 +4233,9 @@ function deleteCoffer(cofferId) {
 function renderReportPage() {
   const year = dom.reportYear.value === 'all' ? null : Number(dom.reportYear.value);
   const hasTransactions = state.transactions.length > 0;
-  dom.reportsEmptyState.hidden = hasTransactions;
+  const hasFinancialPosition = hasTransactions || state.initialBalances.length > 0
+    || calculateCofferBalances(state.coffers, state.transactions).some((item) => item.totalCents > 0);
+  dom.reportsEmptyState.hidden = hasFinancialPosition;
   dom.analysisChapterTabs.hidden = !hasTransactions;
   if (!hasTransactions) selectChapterTab('analysis', 'summary');
   state.reportYear = dom.reportYear.value; // Save the actual selected value
@@ -3968,8 +4268,18 @@ function renderReportSummary(year) {
   const scheduledNet = unsettled.scheduledIncomeCents - unsettled.scheduledExpenseCents;
   const realizedNet = realized.incomeCents - realized.expenseCents;
   const savingsRate = calculateSavingsRate(realized.incomeCents, realized.expenseCents);
+  const throughDate = year === null ? dateKey(new Date()) : `${year}-12-31`;
+  const position = summarizeFinancialPosition({
+    transactions: state.transactions,
+    initialBalances: state.initialBalances || [],
+    coffers: state.coffers,
+    throughDate
+  });
   dom.reportSummary.innerHTML = `
     <dl class="report-summary-grid">
+      <div><dt>Disponível na conta</dt><dd>${formatCurrencyFromCents(position.accountCents)}</dd></div>
+      <div><dt>Guardado em cofrinhos</dt><dd>${formatCurrencyFromCents(position.cofferCents)}</dd></div>
+      <div><dt>Patrimônio total</dt><dd>${formatCurrencyFromCents(position.netWorthCents)}</dd></div>
       <div><dt>Entradas realizadas</dt><dd>${formatCurrencyFromCents(realized.incomeCents)}</dd></div>
       <div><dt>Saídas realizadas</dt><dd>${formatCurrencyFromCents(realized.expenseCents)}</dd></div>
       <div><dt>Resultado realizado</dt><dd>${formatCurrencyFromCents(realizedNet)}</dd></div>
@@ -3977,6 +4287,7 @@ function renderReportSummary(year) {
       <div><dt>Agendado (líquido)</dt><dd>${formatCurrencyFromCents(scheduledNet)}</dd></div>
       <div><dt>Taxa de economia</dt><dd>${savingsRate === null ? 'Não aplicável' : `${savingsRate.toFixed(1).replace('.', ',')}%`}</dd></div>
     </dl>
+    <p class="field-help">Aportes em cofrinhos são transferências entre sua conta e sua reserva; não são despesas de consumo. O patrimônio soma o saldo da conta e o saldo dos cofrinhos.</p>
   `;
 }
 
@@ -3986,6 +4297,20 @@ function renderHelpPage() {
 
   container.replaceChildren();
   container.className = 'help-guide';
+  const searchLabel = document.createElement('label');
+  searchLabel.className = 'help-search';
+  searchLabel.textContent = 'Buscar uma dúvida';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.id = 'helpSearch';
+  search.placeholder = 'Ex.: pendente, cartão, cofrinho, backup';
+  search.setAttribute('aria-describedby', 'helpSearchStatus');
+  searchLabel.appendChild(search);
+  const searchStatus = document.createElement('p');
+  searchStatus.id = 'helpSearchStatus';
+  searchStatus.className = 'field-help';
+  searchStatus.setAttribute('role', 'status');
+  searchStatus.setAttribute('aria-live', 'polite');
 
   const tabs = document.createElement('div');
   tabs.className = 'chapter-tabs help-topic-tabs';
@@ -4033,6 +4358,55 @@ function renderHelpPage() {
     });
   };
 
+  const renderSearchResults = (query) => {
+    const matches = filterHelpTopics(HELP_TOPICS, query);
+    const normalize = (value) => String(value).normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+    const normalizedQuery = normalize(query);
+    tabs.hidden = true;
+    panel.replaceChildren();
+    if (!matches.length) {
+      const empty = document.createElement('p');
+      empty.className = 'help-search-empty';
+      empty.textContent = 'Nenhum tópico encontrado. Tente outra palavra, como “saldo” ou “fatura”.';
+      panel.appendChild(empty);
+      searchStatus.textContent = 'Nenhum resultado.';
+      return;
+    }
+    searchStatus.textContent = `${matches.length} tópico${matches.length === 1 ? '' : 's'} encontrado${matches.length === 1 ? '' : 's'}.`;
+    matches.forEach((topic) => {
+      const article = document.createElement('article');
+      article.className = 'help-search-result';
+      const heading = document.createElement('h4');
+      heading.textContent = topic.title;
+      article.appendChild(heading);
+      const intro = document.createElement('p');
+      intro.textContent = topic.intro;
+      if (normalize(topic.title).includes(normalizedQuery)
+        || normalize(topic.intro).includes(normalizedQuery)) article.appendChild(intro);
+      const grid = document.createElement('div');
+      grid.className = 'help-topic-grid';
+      topic.blocks.forEach((block) => {
+        const matchingItems = block.items.filter((item) => normalize(item).includes(normalizedQuery));
+        if (!normalize(block.title).includes(normalizedQuery) && matchingItems.length === 0) return;
+        const card = document.createElement('article');
+        card.className = 'help-topic-card';
+        const title = document.createElement('h5');
+        title.textContent = block.title;
+        const list = document.createElement('ul');
+        (normalize(block.title).includes(normalizedQuery) ? block.items : matchingItems).forEach((item) => {
+          const li = document.createElement('li');
+          li.textContent = item;
+          list.appendChild(li);
+        });
+        card.append(title, list);
+        grid.appendChild(card);
+      });
+      article.appendChild(grid);
+      panel.appendChild(article);
+    });
+  };
+
   HELP_TOPICS.forEach((topic, index) => {
     const tab = document.createElement('button');
     tab.type = 'button';
@@ -4045,7 +4419,16 @@ function renderHelpPage() {
     tabs.appendChild(tab);
   });
 
-  container.append(tabs, panel);
+  container.append(searchLabel, searchStatus, tabs, panel);
+  search.addEventListener('input', () => {
+    const query = search.value.trim();
+    if (query) renderSearchResults(query);
+    else {
+      tabs.hidden = false;
+      searchStatus.textContent = '';
+      renderTopic(HELP_TOPICS[0].id);
+    }
+  });
   renderTopic(HELP_TOPICS[0].id);
 }
 
@@ -4288,7 +4671,16 @@ function handleBackupImport(event) {
     try {
       const parsed = JSON.parse(reader.result);
       if (!parsed || typeof parsed !== 'object') throw new Error('Formato inválido');
-      const candidate = migrateState(parsed.state || parsed);
+      const importedState = migrateState(parsed.state || parsed);
+      const importedIssues = validateStateShape(importedState);
+      if (importedIssues.length > 0) throw new Error(importedIssues.slice(0, 3).join('; '));
+      const availableSections = getBackupSections(parsed);
+      const sectionsToRestore = selectedBackupSections()
+        .filter((section) => availableSections.includes(section));
+      if (sectionsToRestore.length === 0) {
+        throw new Error('Nenhuma das seções selecionadas está presente neste backup.');
+      }
+      const candidate = migrateState(restoreBackupSections(state, importedState, sectionsToRestore));
       const issues = validateStateShape(candidate);
       if (issues.length > 0) throw new Error(issues.slice(0, 3).join('; '));
       performAutomaticBackup();
@@ -4313,6 +4705,322 @@ function handleBackupImport(event) {
     event.target.value = '';
   };
   reader.readAsText(file);
+}
+
+function updateSyncStatus(message, isError = false) {
+  const status = document.getElementById('syncStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', isError);
+}
+
+function renderSyncQr(image, value) {
+  try {
+    const code = qrcode(0, 'L');
+    code.addData(value);
+    code.make();
+    image.src = code.createDataURL(5, 2);
+    image.hidden = false;
+    return true;
+  } catch {
+    image.hidden = true;
+    updateSyncStatus('O conteúdo excede o tamanho de um QR prático. Use os botões de copiar ou o arquivo único.');
+    return false;
+  }
+}
+
+function openDeviceSyncModal() {
+  closeP2PSession(activeSyncSession);
+  activeSyncSession = null;
+  pendingSyncState = null;
+  stopSyncScanner();
+  document.getElementById('syncSenderPanel').hidden = true;
+  document.getElementById('syncReceiverPanel').hidden = true;
+  document.getElementById('syncAnswerPanel').hidden = true;
+  document.getElementById('syncReceiveActions').hidden = true;
+  document.getElementById('syncOfferQr').hidden = true;
+  document.getElementById('syncAnswerQr').hidden = true;
+  document.getElementById('syncPackageQr').hidden = true;
+  document.getElementById('syncPackageOutput').value = '';
+  document.getElementById('syncPackageInput').value = '';
+  document.getElementById('syncDownloadPackageButton').disabled = true;
+  updateSyncStatus('Escolha uma forma de transferência.');
+  activateModal(document.getElementById('deviceSyncModal'));
+}
+
+async function createSyncQrPackage() {
+  try {
+    const envelope = createSyncEnvelope(state);
+    const packageText = await encodeSyncPackage(envelope);
+    document.getElementById('syncPackageOutput').value = packageText;
+    document.getElementById('syncDownloadPackageButton').disabled = false;
+    renderSyncQr(document.getElementById('syncPackageQr'), packageText);
+    updateSyncStatus(`Pacote pronto (${Math.ceil(packageText.length / 1024)} KB codificados). Use o QR se couber ou baixe o arquivo.`);
+    return packageText;
+  } catch (error) {
+    updateSyncStatus(`Não foi possível gerar o pacote: ${error.message}`, true);
+    return null;
+  }
+}
+
+async function startP2PSyncOffer() {
+  try {
+    closeP2PSession(activeSyncSession);
+    activeSyncSession = null;
+    document.getElementById('syncSenderPanel').hidden = false;
+    document.getElementById('syncReceiverPanel').hidden = true;
+    document.getElementById('syncReceiveActions').hidden = true;
+    updateSyncStatus('Preparando conexão direta e pacote...');
+    const packageText = await createSyncQrPackage();
+    if (!packageText) return;
+    const session = await createP2POffer(packageText, {
+      onPackage: handleIncomingSyncText,
+      onStatus: updateSyncStatus
+    });
+    activeSyncSession = session;
+    document.getElementById('syncOfferSignal').value = session.signal;
+    document.getElementById('syncOfferCode').value = session.code;
+    renderSyncQr(document.getElementById('syncOfferQr'), session.signal);
+    updateSyncStatus('Oferta pronta. No outro dispositivo, leia o QR e devolva a resposta. Os dispositivos precisam estar na mesma rede local.');
+  } catch (error) {
+    updateSyncStatus(`Não foi possível iniciar o pareamento: ${error.message}`, true);
+  }
+}
+
+async function createP2PSyncAnswer() {
+  try {
+    closeP2PSession(activeSyncSession);
+    activeSyncSession = null;
+    updateSyncStatus('Criando resposta direta...');
+    const session = await acceptP2POffer(
+      document.getElementById('syncReceiverOfferInput').value,
+      { onPackage: handleIncomingSyncText, onStatus: updateSyncStatus }
+    );
+    activeSyncSession = session;
+    document.getElementById('syncAnswerPanel').hidden = false;
+    document.getElementById('syncAnswerSignal').value = session.signal;
+    document.getElementById('syncAnswerCode').value = session.code;
+    renderSyncQr(document.getElementById('syncAnswerQr'), session.signal);
+    updateSyncStatus('Resposta pronta. Leia o QR no dispositivo de origem ou copie o texto de conexão.');
+  } catch (error) {
+    updateSyncStatus(`Não foi possível criar a resposta: ${error.message}`, true);
+  }
+}
+
+async function connectP2PSyncAnswer() {
+  try {
+    if (!activeSyncSession) throw new Error('Gere uma oferta primeiro.');
+    await acceptP2PAnswer(
+      activeSyncSession,
+      document.getElementById('syncOfferAnswerInput').value
+    );
+    updateSyncStatus('Conectando os dispositivos. O envio começará quando o canal estiver pronto.');
+  } catch (error) {
+    updateSyncStatus(`Não foi possível conectar: ${error.message}`, true);
+  }
+}
+
+async function parseIncomingSyncText(text) {
+  const value = String(text || '').trim();
+  if (!value) throw new TypeError('Cole ou selecione um pacote de sincronização.');
+  if (value.startsWith('LF1.') || value.startsWith('LF1Z.')) return decodeSyncPackage(value);
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new TypeError('Formato desconhecido. Use um pacote LF1, backup JSON ou QR válido.');
+  }
+  const envelope = parsed?.app === 'LuminaFin'
+    ? parsed
+    : createSyncEnvelope(parsed?.state || parsed);
+  return validateSyncEnvelope(envelope);
+}
+
+async function handleIncomingSyncText(text) {
+  try {
+    pendingSyncState = await parseIncomingSyncText(text);
+    document.getElementById('syncReceiveActions').hidden = false;
+    updateSyncStatus('Pacote recebido e validado. Escolha mesclar ou substituir os dados atuais.');
+  } catch (error) {
+    pendingSyncState = null;
+    updateSyncStatus(`Pacote rejeitado: ${error.message}`, true);
+  }
+}
+
+function applyDeviceSync(mode) {
+  if (!pendingSyncState) {
+    updateSyncStatus('Nenhum pacote validado está pronto para aplicação.', true);
+    return;
+  }
+  try {
+    const nextState = mode === 'merge'
+      ? mergeSyncStates(state, pendingSyncState)
+      : validateSyncEnvelope(createSyncEnvelope(pendingSyncState));
+    nextState.schemaVersion = SCHEMA_VERSION;
+    nextState.updatedAt = new Date().toISOString();
+    nextState.missions = deriveMissionProgress(nextState);
+    const issues = validateStateShape(nextState);
+    if (issues.length) throw new TypeError(issues.slice(0, 5).join('; '));
+
+    const backupKey = `${STORAGE_KEY}-pre-sync-backup`;
+    const backupValue = JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
+      backupVersion: 3,
+      exportedAt: new Date().toISOString(),
+      state
+    });
+    window.localStorage.setItem(backupKey, backupValue);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+    state = nextState;
+    pendingSyncState = null;
+    calcCache.clear();
+    applyTheme();
+    populateSelects();
+    renderAllUI();
+    updateRawEditor();
+    updateSyncStatus(mode === 'merge'
+      ? 'Mesclagem concluída. O backup local anterior foi salvo antes da gravação.'
+      : 'Substituição concluída. O backup local anterior foi salvo antes da gravação.');
+    showToast('Sincronização concluída com backup local.', 'success');
+  } catch (error) {
+    console.error('Falha ao aplicar sincronização:', error);
+    updateSyncStatus(`Sincronização cancelada: ${error.message}`, true);
+    showToast(`Sincronização cancelada: ${error.message}`, 'error');
+  }
+}
+
+async function downloadSyncPackage() {
+  const packageText = document.getElementById('syncPackageOutput').value || await createSyncQrPackage();
+  if (!packageText) return;
+  const blob = new Blob([packageText], { type: 'application/vnd.luminafin.sync' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  try {
+    link.href = url;
+    link.download = `LuminaFin-sync-${dateKey(new Date())}.lfsync`;
+    link.click();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+async function importSyncPackageFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 7 * 1024 * 1024) {
+    updateSyncStatus('O arquivo excede o limite de 7 MB.', true);
+    event.target.value = '';
+    return;
+  }
+  try {
+    const stateFromFile = await parseIncomingSyncText(await file.text());
+    pendingSyncState = stateFromFile;
+    document.getElementById('syncReceiveActions').hidden = false;
+    updateSyncStatus('Arquivo validado. Escolha mesclar ou substituir.');
+  } catch (error) {
+    updateSyncStatus(`Arquivo rejeitado: ${error.message}`, true);
+  } finally {
+    event.target.value = '';
+  }
+}
+
+async function importSyncPackageInput() {
+  await handleIncomingSyncText(document.getElementById('syncPackageInput').value);
+}
+
+async function copySyncText(elementId) {
+  const value = document.getElementById(elementId).value;
+  try {
+    await navigator.clipboard.writeText(value);
+    updateSyncStatus('Código copiado para a área de transferência.');
+  } catch {
+    updateSyncStatus('A cópia automática não foi permitida. Selecione e copie o texto manualmente.');
+    document.getElementById(elementId).focus();
+    document.getElementById(elementId).select();
+  }
+}
+
+async function startSyncScanner(targetId) {
+  stopSyncScanner();
+  if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) {
+    updateSyncStatus('Leitura pela câmera não é suportada neste navegador. Cole o código manualmente.');
+    return;
+  }
+  try {
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    syncScanTargetId = targetId;
+    syncCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    const video = document.getElementById('syncScannerVideo');
+    video.srcObject = syncCameraStream;
+    document.getElementById('syncScannerPanel').hidden = false;
+    await video.play();
+    updateSyncStatus('Aponte a câmera para o QR Code.');
+    const scan = async () => {
+      if (!syncCameraStream) return;
+      try {
+        const codes = await detector.detect(video);
+        if (codes.length && codes[0].rawValue) {
+          document.getElementById(syncScanTargetId).value = codes[0].rawValue;
+          stopSyncScanner();
+          updateSyncStatus('QR lido. Revise o campo e continue.');
+          return;
+        }
+      } catch (error) {
+        stopSyncScanner();
+        updateSyncStatus(`Falha na leitura do QR: ${error.message}`, true);
+        return;
+      }
+      syncCameraFrame = requestAnimationFrame(scan);
+    };
+    syncCameraFrame = requestAnimationFrame(scan);
+  } catch (error) {
+    stopSyncScanner();
+    updateSyncStatus(`Não foi possível abrir a câmera: ${error.message}`, true);
+  }
+}
+
+function stopSyncScanner() {
+  if (syncCameraFrame) window.cancelAnimationFrame(syncCameraFrame);
+  syncCameraFrame = 0;
+  syncCameraStream?.getTracks().forEach((track) => track.stop());
+  syncCameraStream = null;
+  const video = document.getElementById('syncScannerVideo');
+  if (video) video.srcObject = null;
+  const panel = document.getElementById('syncScannerPanel');
+  if (panel) panel.hidden = true;
+}
+
+function applyResponsiveTableLabels(root = document) {
+  root.querySelectorAll('.table-responsive table').forEach((table) => {
+    const labels = [...table.querySelectorAll('thead th')].map((header) => header.textContent.trim());
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      [...row.cells].forEach((cell, index) => {
+        cell.dataset.label = labels[index] || 'Detalhe';
+      });
+    });
+  });
+}
+
+function observeResponsiveTables() {
+  applyResponsiveTableLabels();
+  const observer = new window.MutationObserver((records) => {
+    const tables = new Set();
+    records.forEach((record) => {
+      const table = record.target.closest?.('table');
+      if (table) tables.add(table);
+      record.addedNodes.forEach((node) => {
+        if (node instanceof window.Element) {
+          if (node.matches('.table-responsive table')) tables.add(node);
+          node.querySelectorAll?.('.table-responsive table').forEach((nested) => tables.add(nested));
+        }
+      });
+    });
+    tables.forEach((table) => applyResponsiveTableLabels(table.closest('.table-responsive')));
+  });
+  observer.observe(document.querySelector('main'), { childList: true, subtree: true });
 }
 
 function updateMenuToggleButton(menuOpen) {
@@ -4437,6 +5145,15 @@ function attachEventListeners() {
   if (document.getElementById('downloadSettingsBackupButton')) {
     document.getElementById('downloadSettingsBackupButton').addEventListener('click', backupData);
   }
+  document.getElementById('selectAllBackupSections')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-backup-section]').forEach((input) => { input.checked = true; });
+  });
+  document.getElementById('clearBackupSections')?.addEventListener('click', () => {
+    document.querySelectorAll('[data-backup-section]').forEach((input) => { input.checked = false; });
+  });
+  document.getElementById('openBackupFromReminder')?.addEventListener('click', backupData);
+  document.getElementById('snoozeBackupReminder')?.addEventListener('click', () => snoozeBackupReminder(7));
+  document.getElementById('dismissBackupReminder')?.addEventListener('click', () => snoozeBackupReminder(30));
   if (document.getElementById('installAppButton')) document.getElementById('installAppButton').addEventListener('click', installApp);
   if (document.getElementById('makeBackupFromWarning')) document.getElementById('makeBackupFromWarning').addEventListener('click', () => {
     closeModals();
@@ -4444,8 +5161,10 @@ function attachEventListeners() {
   });
   const menuToggleButton = document.getElementById('menuToggleButton');
   const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+  const sidebarCloseButton = document.getElementById('sidebarCloseButton');
   if (menuToggleButton) menuToggleButton.addEventListener('click', toggleMobileMenu);
   if (sidebarBackdrop) sidebarBackdrop.addEventListener('click', closeMobileMenu);
+  if (sidebarCloseButton) sidebarCloseButton.addEventListener('click', closeMobileMenu);
   document.querySelectorAll('.nav-link').forEach((link) => {
     link.addEventListener('click', () => {
       if (window.innerWidth <= 1100) closeMobileMenu();
@@ -4558,6 +5277,41 @@ function attachEventListeners() {
     if (document.getElementById('backupImportInput')) document.getElementById('backupImportInput').click();
   });
   if (document.getElementById('backupImportInput')) document.getElementById('backupImportInput').addEventListener('change', handleBackupImport);
+  document.getElementById('openDeviceSyncButton')?.addEventListener('click', () => {
+    closeMobileMenu();
+    openDeviceSyncModal();
+  });
+  document.getElementById('openDeviceSyncSettingsButton')?.addEventListener('click', openDeviceSyncModal);
+  document.getElementById('syncStartOfferButton')?.addEventListener('click', startP2PSyncOffer);
+  document.getElementById('syncOpenReceiverButton')?.addEventListener('click', () => {
+    document.getElementById('syncReceiverPanel').hidden = false;
+    document.getElementById('syncSenderPanel').hidden = true;
+    updateSyncStatus('A origem precisa exibir o QR ou enviar o texto completo da oferta.');
+  });
+  document.getElementById('syncCreateAnswerButton')?.addEventListener('click', createP2PSyncAnswer);
+  document.getElementById('syncConnectAnswerButton')?.addEventListener('click', connectP2PSyncAnswer);
+  document.getElementById('syncCopyOfferButton')?.addEventListener('click', () => copySyncText('syncOfferSignal'));
+  document.getElementById('syncCopyAnswerButton')?.addEventListener('click', () => copySyncText('syncAnswerSignal'));
+  document.getElementById('syncExportPackageButton')?.addEventListener('click', createSyncQrPackage);
+  document.getElementById('syncDownloadPackageButton')?.addEventListener('click', downloadSyncPackage);
+  document.getElementById('syncImportPackageButton')?.addEventListener('click', importSyncPackageInput);
+  document.getElementById('syncChoosePackageFileButton')?.addEventListener('click', () => {
+    document.getElementById('syncPackageFile')?.click();
+  });
+  document.getElementById('syncPackageFile')?.addEventListener('change', importSyncPackageFile);
+  document.getElementById('syncMergeButton')?.addEventListener('click', () => applyDeviceSync('merge'));
+  document.getElementById('syncReplaceButton')?.addEventListener('click', () => applyDeviceSync('replace'));
+  document.getElementById('syncStopScannerButton')?.addEventListener('click', stopSyncScanner);
+  document.querySelectorAll('[data-scan-target]').forEach((button) => {
+    button.addEventListener('click', () => startSyncScanner(button.dataset.scanTarget));
+  });
+  document.getElementById('mobileQuickAdd')?.addEventListener('click', () => openTransactionModal());
+  document.querySelectorAll('[data-mobile-target]').forEach((button) => {
+    button.addEventListener('click', () => {
+      document.querySelector(`.nav-link[data-target="${button.dataset.mobileTarget}"]`)?.click();
+    });
+  });
+  observeResponsiveTables();
   document.querySelectorAll('#transactionTable th[data-sort]').forEach((th) => {
     th.addEventListener('click', () => {
       const key = th.dataset.sort;
@@ -4567,9 +5321,22 @@ function attachEventListeners() {
         state.sort.key = key;
         state.sort.order = 'desc';
       }
+      const mobileSort = document.getElementById('mobileTransactionSort');
+      if (mobileSort) mobileSort.value = state.sort.key;
       renderTransactionTable();
     });
   });
+  const mobileTransactionSort = document.getElementById('mobileTransactionSort');
+  if (mobileTransactionSort) {
+    mobileTransactionSort.value = [...mobileTransactionSort.options].some((option) => option.value === state.sort.key)
+      ? state.sort.key
+      : 'date';
+    mobileTransactionSort.addEventListener('change', () => {
+      state.sort.key = mobileTransactionSort.value;
+      state.sort.order = 'desc';
+      renderTransactionTable();
+    });
+  }
   document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', closeModals));
   document.getElementById('missionsFloatButton')?.addEventListener('click', () => {
     if (state.missions) state.missions.dismissed = false;
@@ -4577,6 +5344,12 @@ function attachEventListeners() {
     openMissionsDrawer();
   });
   document.getElementById('closeMissionsDrawer')?.addEventListener('click', closeMissionsDrawer);
+  document.getElementById('openMissionsFromSetup')?.addEventListener('click', openMissionsDrawer);
+  document.getElementById('reopenMissionsButton')?.addEventListener('click', () => {
+    if (state.missions) state.missions.dismissed = false;
+    saveState();
+    openMissionsDrawer();
+  });
   document.getElementById('minimizeMissionsButton')?.addEventListener('click', () => {
     if (state.missions) state.missions.minimized = true;
     saveState();
@@ -4599,6 +5372,13 @@ function attachEventListeners() {
       });
       document.getElementById('missionsActiveList').hidden = selected !== 'active';
       document.getElementById('missionsCompletedList').hidden = selected !== 'completed';
+    });
+  });
+  document.querySelectorAll('[data-interface-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.settings.interfaceMode = button.dataset.interfaceMode === 'complete' ? 'complete' : 'essential';
+      applyTheme();
+      saveState();
     });
   });
   if (document.getElementById('transactionForm')) document.getElementById('transactionForm').addEventListener('submit', handleTransactionSubmit);
@@ -4633,6 +5413,19 @@ function attachEventListeners() {
   if (dom.creditInvoicePaymentSource) {
     dom.creditInvoicePaymentSource.addEventListener('change', updateCreditInvoicePaymentSource);
   }
+  document.getElementById('fillFullInvoicePayment')?.addEventListener('click', () => {
+    const invoiceId = document.getElementById('creditInvoicePaymentModal').dataset.invoiceId;
+    const invoice = state.creditInvoices.find((item) => item.id === invoiceId);
+    if (!invoice) return;
+    const amount = getCreditInvoiceSummary(invoice).remainingCents;
+    document.getElementById('creditInvoicePaymentAmount').value =
+      convertBaseCentsToInputValue(amount) ?? fromCents(amount);
+  });
+  dom.creditInvoiceCardFilter?.addEventListener('change', renderCreditCards);
+  dom.creditInvoiceMonthFilter?.addEventListener('change', renderCreditCards);
+  document.getElementById('openCreditCardsFromDashboard')?.addEventListener('click', () => {
+    document.querySelector('.nav-link[data-target="creditCards"]')?.click();
+  });
   if (document.getElementById('createCreditCardButton')) {
     document.getElementById('createCreditCardButton').addEventListener('click', () => openCreditCardModal());
   }
@@ -4644,6 +5437,7 @@ function attachEventListeners() {
   if (document.getElementById('fixedType')) document.getElementById('fixedType').addEventListener('change', toggleDurationField);
   document.addEventListener('click', handleTableActions);
   document.getElementById('loadDemoDataButton')?.addEventListener('click', loadDemoData);
+  document.getElementById('clearDemoDataButton')?.addEventListener('click', clearDemoData);
   document.getElementById('reportsEmptyLoadDemo')?.addEventListener('click', loadDemoData);
   document.getElementById('fixedEmptyAddButton')?.addEventListener('click', () => openFixedModal());
   document.querySelectorAll('[data-onboarding-action]').forEach((button) => {
@@ -4954,6 +5748,9 @@ function handleInitialBalanceSubmit(event) {
 }
 
 function closeModals() {
+  stopSyncScanner();
+  closeP2PSession(activeSyncSession);
+  activeSyncSession = null;
   document.querySelectorAll('.modal.active').forEach((modal) => {
     modal.classList.remove('active');
     modal.setAttribute('aria-hidden', 'true');
@@ -4992,7 +5789,7 @@ function handleTransactionSubmit(event) {
     showToast('Uma operação vinculada deve permanecer vinculada a um cofrinho.', 'error');
     return;
   }
-  if (!date || !description || !value || (!cofferOperation && type !== 'transfer' && !category)) {
+  if (!date || !value || (!cofferOperation && type !== 'transfer' && !category)) {
     showToast('Preencha todos os campos obrigatórios.', 'error');
     return;
   }
@@ -5069,13 +5866,19 @@ function handleTransactionSubmit(event) {
       showToast('Selecione entre 1x e 24x.', 'error');
       return;
     }
-    if (existing?.sourceType === 'creditPurchase' && !removeUnpaidCreditPurchaseInstallments(existing.id)) {
-      showToast('Não é possível alterar uma compra parcialmente paga.', 'error');
+    const usage = calculateCreditCardUsage(card, state.creditInstallments);
+    const previousCommitmentCents = existing?.sourceType === 'creditPurchase'
+      && existing.creditCardId === card.id
+      ? state.creditInstallments
+        .filter((item) => item.purchaseId === existing.id)
+        .reduce((sum, item) => sum + Math.max(0, item.amountCents - item.paidCents), 0)
+      : 0;
+    if (valueCents > usage.availableCents + previousCommitmentCents) {
+      showToast('O limite disponível do cartão é insuficiente para esta compra.', 'error');
       return;
     }
-    const usage = calculateCreditCardUsage(card, state.creditInstallments);
-    if (valueCents > usage.availableCents) {
-      showToast('O limite disponível do cartão é insuficiente para esta compra.', 'error');
+    if (existing?.sourceType === 'creditPurchase' && !removeUnpaidCreditPurchaseInstallments(existing.id)) {
+      showToast('Não é possível alterar uma compra parcialmente paga.', 'error');
       return;
     }
     record = {
@@ -5141,8 +5944,20 @@ function handleTransactionSubmit(event) {
       payment: safePayment,
       status,
       description: safeDescription,
+      sourceType: null,
       ...fxSnapshot
     };
+  }
+  if (existing?.sourceType === 'creditPurchase' && record.sourceType !== 'creditPurchase') {
+    if (!removeUnpaidCreditPurchaseInstallments(existing.id)) {
+      showToast('Não é possível alterar uma compra parcialmente paga.', 'error');
+      return;
+    }
+    delete record.sourceType;
+    delete record.creditCardId;
+    delete record.installmentCount;
+    delete record.affectsAccountBalance;
+    delete record.accountImpactCents;
   }
   record = {
     ...(existing || {}),
@@ -5456,6 +6271,10 @@ function handleTableActions(event) {
   if (!action) return;
   const id = action.dataset.id;
   const type = action.dataset.action;
+  if (type === 'pay-credit-invoice') {
+    openCreditInvoicePayment(id, action.dataset.mode || 'partial');
+    return;
+  }
   if (type === 'create-coffer') {
     openCofferModal();
     return;
@@ -5653,7 +6472,7 @@ function loadDemoData() {
   performAutomaticBackup();
   showDangerConfirmModal(
     'Carregar dados de demonstração',
-    'Os dados atuais serão substituídos por um conjunto demonstrativo. Um backup automático será criado antes da substituição; use “Deletar TODOS os dados” em Configurações para limpar a demonstração depois.',
+    'Os dados atuais serão substituídos por um conjunto demonstrativo. Um backup automático será criado antes da substituição; use “Limpar demonstração e começar do zero” no Dashboard para remover o exemplo com segurança.',
     'CARREGAR DEMONSTRAÇÃO',
     () => {
       state = createDemoState(state);
@@ -5667,6 +6486,39 @@ function loadDemoData() {
       updateRawEditor();
       document.querySelector('.nav-link[data-target="dashboard"]')?.click();
       showToast('Dados de demonstração carregados.', 'success');
+    }
+  );
+}
+
+function clearDemoData() {
+  if (state.settings.demoMode !== true) return;
+  showDangerConfirmModal(
+    'Limpar dados de demonstração e começar do zero?',
+    'O estado demonstrativo será removido e substituído por uma base vazia com as categorias iniciais. Um backup automático será criado antes da limpeza.',
+    'LIMPAR DEMONSTRAÇÃO',
+    () => {
+      performAutomaticBackup();
+      const settings = { ...state.settings, demoMode: false };
+      state = migrateState(createEmptyState());
+      state.settings = { ...state.settings, ...settings };
+      state.categories = defaultCategories.map((item) => ({
+        ...item,
+        limitCents: toCents(item.limit),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        deletedAt: null,
+        version: 1
+      }));
+      calcCache.clear();
+      saveState();
+      applyTheme();
+      populateSelects();
+      rebuildCategoryDropdowns();
+      rebuildCreditCardOptions();
+      renderAllUI();
+      updateRawEditor();
+      document.querySelector('.nav-link[data-target="dashboard"]')?.click();
+      showToast('Demonstração removida. Você já pode começar com seus próprios dados.', 'success');
     }
   );
 }
@@ -5718,9 +6570,34 @@ function clearAllTransactions() {
 }
 
 function backupData() {
-  downloadBackupSnapshot(JSON.parse(JSON.stringify(state)), 'LuminaFin-backup.json');
-  markMissionAndSave('backup');
-  showToast('Backup exportado com sucesso.', 'success');
+  try {
+    const selected = selectedBackupSections();
+    state = markMissionCompleted(state, 'backup');
+    saveState();
+    const snapshot = JSON.parse(JSON.stringify(state));
+    const backup = createSelectiveBackup(snapshot, selected);
+    downloadBackupSnapshot(backup, 'LuminaFin-backup.json');
+    let historySaved = true;
+    try {
+      window.localStorage.setItem(BACKUP_HISTORY_KEY, JSON.stringify({
+        lastBackupAt: new Date().toISOString(),
+        stateUpdatedAt: snapshot.updatedAt,
+        includedSections: selected
+      }));
+      window.localStorage.removeItem(BACKUP_SNOOZE_KEY);
+    } catch (error) {
+      historySaved = false;
+      console.error('Falha ao salvar o histórico do backup:', error);
+    }
+    renderBackupReminder();
+    renderMissionsWidget();
+    showToast(historySaved
+      ? 'Backup exportado com sucesso.'
+      : 'O arquivo foi exportado, mas não foi possível registrar a data do backup.', historySaved ? 'success' : 'warning');
+  } catch (error) {
+    console.error('Falha ao exportar backup:', error);
+    showToast(`Não foi possível exportar o backup: ${error.message}`, 'error');
+  }
 }
 
 function updateThemeColor() {

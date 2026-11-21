@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calculateRealizedBalance,
+  calculatePeriodTotals,
   calculatePreviousPeriodBalance,
   calculateFilteredOpeningBalance,
   calculateDailyExpenseAverage,
@@ -22,6 +23,7 @@ import {
 import { closeMobileNavigation } from '../src/ui/navigation.js';
 import {
   evaluatePurchaseDecision,
+  summarizeFinancialPosition,
   simulateLongTermSavings,
   summarizeMonthlyBudget
 } from '../src/core/planning.js';
@@ -209,6 +211,96 @@ describe('LuminaFin financial rules', () => {
     });
   });
 
+  it('treats a paid coffer deposit as a transfer, not consumption or lost net worth', () => {
+    const transactions = [{
+      id: 'deposit-1',
+      date: '2026-11-10',
+      type: 'transfer',
+      status: 'paid',
+      valueCents: 10000,
+      cofferId: 'reserve',
+      cofferOperation: 'deposit',
+      cofferPrincipalDeltaCents: 10000,
+      accountImpactCents: -10000,
+      affectsAccountBalance: true
+    }];
+    const position = summarizeFinancialPosition({
+      transactions,
+      initialBalances: [{ date: '2026-11-01', valueCents: 100000 }],
+      coffers: [{ id: 'reserve', principalCents: 0, yieldCents: 0 }]
+    });
+
+    expect(position).toMatchObject({
+      accountCents: 90000,
+      cofferCents: 10000,
+      netWorthCents: 100000
+    });
+    expect(calculatePeriodTotals(transactions, 2026, 11)).toEqual({
+      incomeCents: 0,
+      expenseCents: 0
+    });
+  });
+
+  it('inclui parcelas da fatura e gastos fixos nas despesas comprometidas', () => {
+    const position = summarizeMonthlyBudget({
+      transactions: [
+        { date: '2026-11-02', type: 'income', status: 'paid', valueCents: 500000 }
+      ],
+      fixedExpenses: [{
+        id: 'rent-1',
+        active: true,
+        type: 'fixed',
+        day: 5,
+        valueCents: 100000
+      }],
+      creditInstallments: [{
+        invoiceMonth: '2026-11',
+        amountCents: 80000,
+        paidCents: 20000,
+        installmentCount: 3
+      }, {
+        invoiceMonth: '2026-11',
+        amountCents: 10000,
+        paidCents: 0,
+        installmentCount: 1
+      }, {
+        invoiceMonth: '2026-12',
+        amountCents: 15000,
+        paidCents: 0,
+        installmentCount: 3
+      }],
+      year: 2026,
+      month: 11
+    });
+
+    expect(position).toMatchObject({
+      ungeneratedFixedExpenseCents: 100000,
+      creditInvoiceCents: 70000,
+      installmentCreditCents: 60000,
+      singlePaymentCreditCents: 10000,
+      nextCreditInvoiceCents: 15000,
+      creditInvoiceTrendCents: -55000,
+      committedExpenseCents: 170000,
+      safeRemainingCents: 330000
+    });
+  });
+
+  it('migrates missing descriptions and card links as optional transaction fields', () => {
+    const migrated = migrateState({
+      transactions: [{
+        id: 'transaction-optional',
+        date: '2026-11-01',
+        type: 'expense',
+        status: 'paid',
+        value: 12.5
+      }]
+    });
+
+    expect(migrated.transactions[0].description).toBe('');
+    expect(migrated.transactions[0].creditCardId).toBeUndefined();
+    expect(validateStateShape(migrated)).toEqual([]);
+  });
+
   it('simula horizonte longo em centavos e desconta inflação do valor nominal', () => {
     const projection = simulateLongTermSavings({
       initialCents: 100000,
@@ -232,7 +324,8 @@ describe('LuminaFin financial rules', () => {
       pendingExpenseCents: 0,
       scheduledIncomeCents: 0,
       scheduledExpenseCents: 0,
-      ungeneratedFixedExpenseCents: 0
+      ungeneratedFixedExpenseCents: 0,
+      creditInvoiceCents: 5000
     };
     const decision = evaluatePurchaseDecision({
       amountCents: 50000,
@@ -246,13 +339,17 @@ describe('LuminaFin financial rules', () => {
         active: true,
         principalCents: 90000,
         yieldCents: 10000,
+        monthlyRateBps: 100,
         createdAt: '2026-01-01T00:00:00.000Z'
       }],
       transactions: []
     });
 
     expect(decision.verdict).toBe('tight');
-    expect(decision.cashShortfallCents).toBe(30000);
+    expect(decision.cashShortfallCents).toBe(35000);
+    expect(decision.reserveCents).toBe(100000);
+    expect(decision.reserveMonthlyYieldCents).toBe(1000);
+    expect(decision.immediateCapacityCents).toBe(15000);
     expect(decision.suggestedCoffer.yieldLossCents).toBeGreaterThan(0);
     expect(decision.suggestedCoffer.netReceivedCents).toBeGreaterThanOrEqual(30000);
   });

@@ -1,4 +1,4 @@
-const CACHE_VERSION = '2.0.5';
+const CACHE_VERSION = '2.0.9';
 const LOCAL_CACHE = `LuminaFin-local-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `LuminaFin-runtime-${CACHE_VERSION}`;
 const LOCAL_ASSETS = [
@@ -11,10 +11,19 @@ const LOCAL_ASSETS = [
   'src/core/fixed-expenses.js',
   'src/core/currency.js',
   'src/core/coffers.js',
+  'src/core/credit-cards.js',
   'src/core/planning.js',
+  'src/core/presets.js',
+  'src/core/help.js',
+  'src/core/demo-data.js',
+  'src/core/missions.js',
+  'src/core/device-sync.js',
+  'src/core/backup.js',
+  'src/core/version.js',
   'src/core/validation.js',
   'src/storage/schema.js',
   'src/ui/navigation.js',
+  'node_modules/qrcode-generator/dist/qrcode.mjs',
   'manifest.json',
   'icon.svg',
   'icon-192.png',
@@ -72,6 +81,22 @@ self.addEventListener('fetch', (event) => {
           return new Response('', { status: 504, statusText: 'Offline' });
         }
       })()
+    );
+    return;
+  }
+
+  if (url.pathname.endsWith('/version.json')) {
+    event.respondWith(
+      fetch(event.request, { cache: 'no-store' }).then(async (response) => {
+        if (response.ok && response.type !== 'opaque') {
+          const cache = await caches.open(LOCAL_CACHE);
+          await cache.put(event.request, response.clone()).catch(() => undefined);
+        }
+        return response;
+      }).catch(async () => (
+        await caches.match(event.request, { cacheName: LOCAL_CACHE })
+        || new Response('', { status: 504, statusText: 'Offline' })
+      ))
     );
     return;
   }

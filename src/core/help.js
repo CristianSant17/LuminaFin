@@ -1,6 +1,15 @@
 export const HELP_TOPICS = [
   {
     id: 'start',
+    title: 'Por onde começar em 3 minutos',
+    intro: 'Você não precisa configurar tudo antes de usar. Com o saldo inicial e um lançamento, o LuminaFin já mostra uma visão útil.',
+    blocks: [
+      { title: 'O mínimo para começar', items: ['1. Informe quanto há na conta em Saldo inicial.', '2. Registre uma entrada ou saída recente em Lançamentos.', '3. Confira o saldo e os indicadores no Dashboard.', 'Categorias, gastos fixos, cartão e cofrinhos podem ser configurados depois.'] },
+      { title: 'Quer explorar primeiro?', items: ['Carregue dados de demonstração para conhecer gráficos, faturas e cofrinhos.', 'A demonstração substitui os dados atuais após criar um backup automático.', 'Use “Limpar demonstração e começar do zero” quando quiser remover o exemplo com segurança.'] }
+    ]
+  },
+  {
+    id: 'overview',
     title: 'Visão geral',
     intro: 'O LuminaFin é um organizador financeiro pessoal local. Ele ajuda a registrar movimentos, planejar cenários e acompanhar metas, sem executar operações bancárias.',
     blocks: [
@@ -13,7 +22,7 @@ export const HELP_TOPICS = [
     title: 'Navegação',
     intro: 'O menu lateral concentra as áreas principais. Em telas menores, use o botão de menu para abrir e fechar a navegação.',
     blocks: [
-      { title: 'Áreas disponíveis', items: ['Dashboard: visão do período, composição da conta e projeções.', 'Lançamentos: cadastro, edição, filtros e status dos movimentos.', 'Categorias: classificação e limites mensais.', 'Gastos Fixos: recorrências fixas ou por duração.', 'Cofrinhos: reservas, metas e rendimentos simulados.', 'Cartões: limites, compras parceladas e faturas.', 'Relatórios: análises, cenários, metas e projeções.', 'Configurações: moeda, aparência, backup e dados.'] }
+      { title: 'Áreas disponíveis', items: ['Dashboard: visão do período, composição da conta e projeções.', 'Lançamentos: cadastro, edição, filtros e status dos movimentos.', 'Cartões: limites, compras parceladas e faturas.', 'Cofrinhos: reservas, metas e rendimentos simulados.', 'Gastos Fixos: recorrências fixas ou por duração.', 'Categorias: classificação e limites mensais.', 'Relatórios: análises, cenários, metas e projeções.', 'Tenho Dúvida: busca de respostas e orientações.', 'Configurações: moeda, aparência, backup e dados.'] }
     ]
   },
   {
@@ -51,6 +60,16 @@ export const HELP_TOPICS = [
     ]
   },
   {
+    id: 'faq',
+    title: 'FAQ prático',
+    intro: 'Respostas rápidas para as dúvidas mais comuns durante o uso.',
+    blocks: [
+      { title: 'Pago, pendente e agendado', items: ['Pago altera o saldo realizado quando afeta a conta.', 'Pendente ainda não foi concluído; aparece como compromisso, sem alterar o saldo realizado.', 'Agendado é uma previsão futura e também não altera o saldo realizado.'] },
+      { title: 'Cartão e cofrinhos', items: ['Uma compra no crédito compromete o limite e a fatura, mas não reduz a conta na hora.', 'Aporte é uma transferência da conta para um cofrinho, não uma despesa de consumo.', 'O rendimento do cofrinho é uma estimativa local e pode ser ajustado para corresponder ao valor observado.'] },
+      { title: 'Offline, sincronização e backup', items: ['Depois de carregar, o app pode funcionar offline neste navegador; recursos externos podem depender de internet.', 'Sincronize por pareamento local ou pacote. Antes de aplicar, o app valida e salva um backup no dispositivo.', 'Backup exporta um arquivo que você deve guardar fora do navegador. Não há sincronização bancária nem nuvem automática.'] }
+    ]
+  },
+  {
     id: 'daily',
     title: 'Uso diário',
     intro: 'Fluxos recomendados para manter os dados consistentes.',
@@ -65,7 +84,8 @@ export const HELP_TOPICS = [
     intro: 'A persistência é local e deve ser tratada como responsável pelo usuário.',
     blocks: [
       { title: 'localStorage', items: ['O estado, tema e preferências são armazenados no navegador.', 'Limpar dados do navegador remove o histórico salvo.', 'Dados em um navegador não aparecem automaticamente em outros dispositivos.'] },
-      { title: 'Backup e importação', items: ['Crie backups JSON periodicamente pela seção Configurações.', 'Antes de importar, faça um backup do estado atual.', 'A importação valida estruturas, migrando dados antigos para o formato atual.'] },
+      { title: 'Backup e importação', items: ['Crie backups JSON periodicamente pela seção Configurações; todos os módulos vêm selecionados por padrão e você pode escolher o que exportar.', 'Ao restaurar, somente os módulos marcados são substituídos; vínculos necessários podem incluir categorias relacionadas.', 'Antes de importar, o estado atual é baixado como backup síncrono. O arquivo recebido é validado antes de gravar, e formatos antigos continuam aceitos.', 'Um lembrete discreto avisa quando nunca houve backup, quando ele está antigo ou quando há alterações posteriores; você pode adiá-lo.'] },
+      { title: 'Sincronização entre dispositivos', items: ['O pareamento WebRTC transfere dados diretamente entre dois navegadores; não usa servidor de dados ou conta em nuvem.', 'Sem um serviço de sinalização, a oferta e a resposta precisam ser trocadas por QR Code ou cópia de texto, e os dispositivos devem estar na mesma rede local.', 'O pacote offline pode ser comprimido, exportado como arquivo único ou lido por QR quando couber.', 'Ao receber dados, escolha mesclar por IDs e timestamps ou substituir tudo. O estado atual recebe um backup local síncrono antes da gravação, e o pacote é validado pelo schema completo.', 'A mesclagem resolve conflitos pelo updatedAt, versão e exclusão mais recente; faça um backup externo antes de mudanças importantes.'] },
       { title: 'JSON, lixeira e ações críticas', items: ['O editor JSON é avançado: alterações podem invalidar regras ou vínculos.', 'A lixeira permite recuperar alguns itens excluídos conforme a ação disponível.', 'Limpar categorias, lançamentos ou todos os dados exige confirmações explícitas.'] },
       { title: 'Tema e PWA', items: ['Tema claro e escuro podem ser configurados por preferência e cores.', 'O PWA pode instalar o LuminaFin no dispositivo quando o navegador suportar.', 'Uma instalação não cria sincronização bancária ou em nuvem.'] }
     ]
@@ -79,3 +99,16 @@ export const HELP_TOPICS = [
     ]
   }
 ];
+
+export function filterHelpTopics(topics, query) {
+  const search = String(query || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  if (!search) return topics;
+  return topics.filter((topic) => {
+    const text = [
+      topic.title,
+      topic.intro,
+      ...topic.blocks.flatMap((block) => [block.title, ...block.items])
+    ].join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+    return text.includes(search);
+  });
+}

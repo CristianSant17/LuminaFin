@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { createEmptyState, migrateState } from '../src/storage/schema.js';
 import {
   MISSION_DEFINITIONS,
+  MISSION_TRACKS,
   deriveMissionProgress,
+  getCurrentMission,
   markMissionCompleted,
   normalizeMissionState
 } from '../src/core/missions.js';
@@ -16,6 +18,25 @@ describe('Missões da trilha inicial', () => {
     expect(MISSION_DEFINITIONS.filter((mission) =>
       !progress.completedIds.includes(mission.id)
     ).every((mission) => mission.id !== 'initial-balance')).toBe(true);
+  });
+
+  it('organizes the nine missions into three progressive tracks with one current mission', () => {
+    const state = createEmptyState();
+    expect(MISSION_TRACKS).toHaveLength(3);
+    expect(MISSION_DEFINITIONS).toHaveLength(9);
+    expect(MISSION_TRACKS.map((track) =>
+      MISSION_DEFINITIONS.filter((mission) => mission.trackId === track.id).length
+    )).toEqual([3, 3, 3]);
+    expect(getCurrentMission(state).id).toBe('initial-balance');
+    state.initialBalances = [{ id: 'balance', valueCents: 50000 }];
+    state.transactions = [{ id: 'first', sourceType: null }];
+    expect(getCurrentMission(state).id).toBe('dashboard-check');
+  });
+
+  it('allows the Dashboard check and optional route steps to persist as completed', () => {
+    const state = markMissionCompleted(createEmptyState(), 'dashboard-check');
+    const completed = markMissionCompleted(state, 'pocket-check');
+    expect(deriveMissionProgress(completed).completedIds).toEqual(['dashboard-check', 'pocket-check']);
   });
 
   it('persists manual and derived mission progress through migration', () => {

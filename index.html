@@ -26,14 +26,17 @@
           <h1>LuminaFin</h1>
           <p>Controle financeiro completo</p>
         </div>
+        <button class="sidebar-close-button" id="sidebarCloseButton" type="button" aria-label="Fechar menu de navegação">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
       </div>
       <nav class="nav-menu" aria-label="Navegação principal" role="tablist">
         <button class="nav-link active" role="tab" aria-selected="true" aria-controls="dashboard" data-target="dashboard"><i class="fa-solid fa-house"></i> Dashboard</button>
         <button class="nav-link" role="tab" aria-selected="false" aria-controls="transactions" data-target="transactions"><i class="fa-solid fa-file-invoice-dollar"></i> Lançamentos</button>
-        <button class="nav-link" role="tab" aria-selected="false" aria-controls="categories" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
-        <button class="nav-link" role="tab" aria-selected="false" aria-controls="fixed" data-target="fixed"><i class="fa-solid fa-repeat"></i> Gastos Fixos</button>
-        <button class="nav-link" role="tab" aria-selected="false" aria-controls="coffers" data-target="coffers"><i class="fa-solid fa-piggy-bank"></i> Cofrinhos</button>
         <button class="nav-link" role="tab" aria-selected="false" aria-controls="creditCards" data-target="creditCards"><i class="fa-solid fa-credit-card"></i> Cartões</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="coffers" data-target="coffers"><i class="fa-solid fa-piggy-bank"></i> Cofrinhos</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="fixed" data-target="fixed"><i class="fa-solid fa-repeat"></i> Gastos Fixos</button>
+        <button class="nav-link" role="tab" aria-selected="false" aria-controls="categories" data-target="categories"><i class="fa-solid fa-folder-open"></i> Categorias</button>
         <button class="nav-link" role="tab" aria-selected="false" aria-controls="reports" data-target="reports"><i class="fa-solid fa-chart-line"></i> Relatórios</button>
         <button class="nav-link" role="tab" aria-selected="false" aria-controls="help" data-target="help"><i class="fa-solid fa-question-circle"></i> Tenho Dúvida</button>
         <button class="nav-link" role="tab" aria-selected="false" aria-controls="admin" data-target="admin"><i class="fa-solid fa-gear"></i> Configurações</button>
@@ -48,10 +51,28 @@
           <span>Light</span>
         </div>
         <button class="secondary-button" id="backupButton"><i class="fa-solid fa-download"></i> Backup</button>
+        <button class="secondary-button" id="openDeviceSyncButton"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Sincronizar dispositivos</button>
         <button class="secondary-button" id="installAppButton"><i class="fa-solid fa-download"></i> Instalar app </button>
       </div>
     </aside>
     <div class="sidebar-backdrop" id="sidebarBackdrop" aria-hidden="true"></div>
+    <nav class="mobile-quick-nav" aria-label="Acesso rápido">
+      <button type="button" data-mobile-target="dashboard" aria-label="Dashboard">
+        <i class="fa-solid fa-house" aria-hidden="true"></i><span>Início</span>
+      </button>
+      <button type="button" data-mobile-target="transactions" aria-label="Lançamentos">
+        <i class="fa-solid fa-list" aria-hidden="true"></i><span>Lançamentos</span>
+      </button>
+      <button type="button" class="mobile-quick-add" id="mobileQuickAdd" aria-label="Novo lançamento">
+        <i class="fa-solid fa-plus" aria-hidden="true"></i><span>Novo</span>
+      </button>
+      <button type="button" data-mobile-target="creditCards" aria-label="Cartões">
+        <i class="fa-solid fa-credit-card" aria-hidden="true"></i><span>Cartões</span>
+      </button>
+      <button type="button" data-mobile-target="coffers" aria-label="Cofrinhos">
+        <i class="fa-solid fa-piggy-bank" aria-hidden="true"></i><span>Cofrinhos</span>
+      </button>
+    </nav>
     <main class="content">
       <header class="topbar">
         <div class="topbar-left">
@@ -68,6 +89,17 @@
           <button class="primary-button" id="openAddTransaction"><i class="fa-solid fa-plus"></i> Novo lançamento</button>
         </div>
       </header>
+      <aside class="backup-reminder" id="backupReminder" aria-live="polite" hidden>
+        <div>
+          <strong>Proteja seus dados</strong>
+          <p id="backupReminderMessage"></p>
+        </div>
+        <div class="backup-reminder-actions">
+          <button type="button" class="primary-button small" id="openBackupFromReminder">Fazer backup</button>
+          <button type="button" class="secondary-button small" id="snoozeBackupReminder">Lembrar em 7 dias</button>
+          <button type="button" class="icon-button" id="dismissBackupReminder" aria-label="Dispensar lembrete por 30 dias">×</button>
+        </div>
+      </aside>
 
       <!-- Dashboard -->
       <section class="page-panel active" id="dashboard">
@@ -99,19 +131,23 @@
             <button type="button" class="secondary-button" id="emptyOpenCoffers"><i class="fa-solid fa-piggy-bank" aria-hidden="true"></i> Conhecer cofrinhos</button>
           </div>
           <section class="setup-steps" aria-labelledby="setupStepsTitle">
-            <h4 id="setupStepsTitle">Primeiros passos</h4>
-            <ol>
-              <li><button type="button" data-onboarding-action="balance"><span>1</span> Saldo inicial</button></li>
-              <li><button type="button" data-onboarding-action="categories"><span>2</span> Categorias e limites</button></li>
-              <li><button type="button" data-onboarding-action="fixed"><span>3</span> Gastos fixos</button></li>
-              <li><button type="button" data-onboarding-action="cards"><span>4</span> Cartão de crédito</button></li>
-              <li><button type="button" data-onboarding-action="coffers"><span>5</span> Primeiro cofrinho</button></li>
-            </ol>
+            <h4 id="setupStepsTitle">Sua missão principal</h4>
+            <article class="setup-mission">
+              <span class="missions-kicker" id="missionPrimaryTrack">Trilha 1 — Só o básico para começar</span>
+              <strong id="missionPrimaryTitle">Registrar o saldo inicial</strong>
+              <p id="missionPrimaryDescription">Informe quanto existe na conta antes dos próximos lançamentos.</p>
+              <button type="button" class="primary-button" id="missionPrimaryAction">Começar agora</button>
+              <button type="button" class="text-button" id="openMissionsFromSetup">Ver trilhas e próximas etapas</button>
+            </article>
             <div class="setup-demo">
               <div><strong>Quer apenas explorar?</strong><p>Carregue dados demonstrativos separados dos seus dados reais.</p></div>
               <button type="button" class="secondary-button" id="loadDemoDataButton">Carregar dados de exemplo</button>
             </div>
           </section>
+        </div>
+        <div class="demo-mode-banner" id="demoModeBanner" hidden>
+          <p>Você está explorando dados demonstrativos. Seus dados reais não são misturados a este conjunto.</p>
+          <button type="button" class="danger-button" id="clearDemoDataButton">Limpar demonstração e começar do zero</button>
         </div>
         <div class="chapter-tabs" role="tablist" aria-label="Capítulos do Dashboard" data-chapter-group="dashboard">
           <button type="button" class="chapter-tab active" role="tab" aria-selected="true" data-chapter-tab="summary">Resumo</button>
@@ -189,7 +225,7 @@
         <section class="financial-position chapter-panel" data-chapter-scope="dashboard" data-chapter="summary" aria-labelledby="financialPositionTitle">
           <div class="section-header">
             <h4 id="financialPositionTitle">Posição financeira de hoje</h4>
-            <span>Conta e cofrinhos separados; saldo realizado não inclui pendências.</span>
+            <span>Disponível na conta e reserva em cofrinhos são mostrados separadamente.</span>
           </div>
           <div class="position-stat-grid">
             <div><span>Disponível na conta</span><strong id="positionAccountBalance">R$ 0,00</strong></div>
@@ -197,12 +233,27 @@
             <div><span>Aplicado em cofrinhos</span><strong id="positionCofferBalance">R$ 0,00</strong><small id="positionCofferComposition">Principal R$ 0,00 · rendimento R$ 0,00</small></div>
             <div><span>Patrimônio consolidado</span><strong id="positionNetWorth">R$ 0,00</strong></div>
           </div>
+          <details class="context-help">
+            <summary>Entenda essa diferença</summary>
+            <p>Um aporte reduz o dinheiro disponível na conta, mas transfere o mesmo valor para um cofrinho. Isso não é uma despesa de consumo; o patrimônio soma conta e cofrinhos.</p>
+          </details>
           <dl class="position-obligations">
             <div><dt>A receber pendente</dt><dd id="positionPendingIncome">R$ 0,00</dd></div>
             <div><dt>Boletos pendentes</dt><dd id="positionPendingExpense">R$ 0,00</dd></div>
             <div><dt>Entradas agendadas</dt><dd id="positionScheduledIncome">R$ 0,00</dd></div>
             <div><dt>Saídas agendadas</dt><dd id="positionScheduledExpense">R$ 0,00</dd></div>
           </dl>
+          <section class="dashboard-credit-position" aria-labelledby="dashboardCreditTitle">
+            <div class="section-header">
+              <h4 id="dashboardCreditTitle">Cartões e faturas</h4>
+              <button type="button" class="secondary-button small" id="openCreditCardsFromDashboard">Ver cartões</button>
+            </div>
+            <div class="dashboard-credit-stats">
+              <div><span>Faturas atuais</span><strong id="dashboardCurrentInvoices">R$ 0,00</strong><small id="dashboardNextDue">Sem vencimentos em aberto</small></div>
+              <div><span>Próximas parcelas</span><strong id="dashboardUpcomingInvoices">R$ 0,00</strong><small>Valor previsto do próximo ciclo</small></div>
+              <div><span>Limite total</span><strong id="dashboardCreditTotal">R$ 0,00</strong><small id="dashboardCreditUsed">Utilizado: R$ 0,00</small><small id="dashboardCreditAvailable">Disponível: R$ 0,00</small></div>
+            </div>
+          </section>
         </section>
 
         <div class="dashboard-grid chapter-panel" data-chapter-scope="dashboard" data-chapter="trends">
@@ -272,6 +323,16 @@
                 <option value="10">10</option>
                 <option value="25">25</option>
                 <option value="50">50</option>
+              </select>
+            </label>
+            <label class="mobile-sort-control">
+              Ordenar
+              <select id="mobileTransactionSort">
+                <option value="date">Data</option>
+                <option value="category">Categoria</option>
+                <option value="type">Tipo</option>
+                <option value="value">Valor</option>
+                <option value="status">Status</option>
               </select>
             </label>
           </div>
@@ -443,6 +504,14 @@
           <button type="button" class="chapter-tab" role="tab" aria-selected="false" data-chapter-tab="invoices">Faturas</button>
         </div>
         <div id="creditCardList" class="credit-card-grid chapter-panel" data-chapter-scope="creditCards" data-chapter="cards" aria-live="polite"></div>
+        <div class="credit-invoice-filters chapter-panel" data-chapter-scope="creditCards" data-chapter="invoices">
+          <label>Cartão
+            <select id="creditInvoiceCardFilter"><option value="">Todos os cartões</option></select>
+          </label>
+          <label>Ciclo / fatura
+            <select id="creditInvoiceMonthFilter"><option value="">Todos os ciclos</option></select>
+          </label>
+        </div>
         <div id="creditInvoiceList" class="credit-invoice-list chapter-panel" data-chapter-scope="creditCards" data-chapter="invoices" aria-live="polite"></div>
       </section>
       <!-- Reports -->
@@ -724,6 +793,12 @@
           </div>
         </div>
 
+        <div class="help-display-mode" role="group" aria-label="Nível de detalhes da interface">
+          <span>Visualização</span>
+          <button type="button" data-interface-mode="essential" aria-pressed="true">Essencial</button>
+          <button type="button" data-interface-mode="complete" aria-pressed="false">Completo</button>
+          <small>Você pode mudar esta opção a qualquer momento.</small>
+        </div>
         <div class="help-content" id="helpContent">
           <!-- Introdução -->
           <div class="help-section">
@@ -1045,7 +1120,7 @@
             </ul>
 
             <div class="help-footer">
-              <p><strong>LuminaFin v1.3</strong> - Seu controle financeiro completo e inteligente! 🚀</p>
+              <p><strong>LuminaFin <span id="appVersionHelp">v2.0.0 (local)</span></strong> - Seu controle financeiro completo e inteligente! 🚀</p>
             </div>
           </div>
         </div>
@@ -1177,7 +1252,29 @@
               <input type="file" id="backupImportInput" accept="application/json" class="hidden" />
               <button class="secondary-button" id="importBackupButton"><i class="fa-solid fa-upload" aria-hidden="true"></i> Importar backup</button>
             </div>
+            <fieldset class="backup-section-picker">
+              <legend>Dados para exportar ou restaurar</legend>
+              <p>Todos vêm selecionados. Ao restaurar, somente as seções marcadas serão substituídas; dependências necessárias podem ser incluídas para manter os vínculos válidos.</p>
+              <div class="backup-section-actions">
+                <button type="button" class="secondary-button small" id="selectAllBackupSections">Selecionar tudo</button>
+                <button type="button" class="secondary-button small" id="clearBackupSections">Limpar seleção</button>
+              </div>
+              <div class="backup-section-options">
+                <label><input type="checkbox" data-backup-section="transactions" checked /> Lançamentos e saldos iniciais</label>
+                <label><input type="checkbox" data-backup-section="creditCards" checked /> Cartões e faturas</label>
+                <label><input type="checkbox" data-backup-section="coffers" checked /> Cofrinhos e histórico</label>
+                <label><input type="checkbox" data-backup-section="fixedExpenses" checked /> Gastos fixos</label>
+                <label><input type="checkbox" data-backup-section="categories" checked /> Categorias</label>
+                <label><input type="checkbox" data-backup-section="planning" checked /> Metas e cenários</label>
+                <label><input type="checkbox" data-backup-section="settings" checked /> Configurações e preferências</label>
+              </div>
+            </fieldset>
             <div class="backup-status" id="backupStatus" aria-live="polite"></div>
+          </section>
+          <section class="admin-card wide">
+            <h4>Sincronização entre dispositivos</h4>
+            <p class="settings-card-description">Transfira dados diretamente entre navegadores ou use um pacote local. Não há conta, nuvem ou banco de dados do LuminaFin.</p>
+            <button type="button" class="primary-button" id="openDeviceSyncSettingsButton"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Abrir sincronização</button>
           </section>
           <section class="admin-card">
             <h4>Lixeira</h4>
@@ -1250,7 +1347,7 @@
   <footer class="app-footer">
     <div class="footer-content">
       <div class="footer-section">
-        <p>LuminaFin v1.3</p>
+        <p>LuminaFin <span id="appVersionFooter">v2.0.0 (local)</span></p>
       </div>
       <div class="footer-section">
         <p>Desenvolvido por <strong>Izanagi</strong></p>
@@ -1340,6 +1437,10 @@
             </div>
             <p class="field-help">A compra entra na fatura do ciclo, sem debitar a conta corrente neste momento.</p>
           </fieldset>
+          <details class="context-help full-width">
+            <summary>Entenda cartão x saldo da conta</summary>
+            <p>A compra no crédito compromete o limite e aparece na fatura; o saldo da conta só muda quando a fatura é paga.</p>
+          </details>
           <fieldset class="full-width coffer-operation-fields">
             <legend>Vínculo com cofrinho (opcional)</legend>
             <div class="form-grid">
@@ -1356,8 +1457,12 @@
                 <select id="transactionCoffer"></select>
               </label>
             </div>
-            <p class="field-help">Aportes e resgates afetam a conta; compras e rendimentos permanecem no saldo do cofrinho.</p>
+            <p class="field-help">Aporte move dinheiro da conta para o cofrinho; não é despesa de consumo. Resgates retornam à conta.</p>
           </fieldset>
+          <details class="context-help full-width">
+            <summary>Entenda saldo realizado x previsto</summary>
+            <p>O saldo realizado inclui apenas movimentos pagos que afetam a conta. Pendências e agendamentos ajudam a prever o mês, mas ainda não alteram esse saldo.</p>
+          </details>
           <label>
             Status
             <select id="transactionStatus" required>
@@ -1365,9 +1470,10 @@
               <option value="pending">Pendente</option>
               <option value="scheduled">Agendado</option>
             </select>
+            <small class="field-help">Pago altera o saldo realizado quando aplicável; pendente e agendado ficam fora dele.</small>
           </label>
           <label class="full-width">
-            Descrição
+            Descrição <span class="optional-hint">(opcional)</span>
             <textarea id="transactionDescription" rows="3" placeholder="Descrição detalhada"></textarea>
           </label>
         </div>
@@ -1426,6 +1532,10 @@
         <label>Valor do pagamento
           <input id="creditInvoicePaymentAmount" type="number" min="0.01" step="0.01" required />
         </label>
+        <button type="button" class="secondary-button" id="fillFullInvoicePayment">Pagar fatura completa</button>
+        <label>Data do pagamento
+          <input id="creditInvoicePaymentDate" type="date" required />
+        </label>
         <label>Origem do pagamento
           <select id="creditInvoicePaymentSource">
             <option value="account">Saldo da conta</option>
@@ -1441,6 +1551,104 @@
         </div>
       </form>
     </div>
+  </div>
+
+  <div class="modal" id="deviceSyncModal" aria-hidden="true">
+          <div class="modal-content device-sync-modal" role="dialog" aria-modal="true" aria-labelledby="deviceSyncTitle">
+            <header>
+              <div>
+                <h3 id="deviceSyncTitle">Sincronizar dispositivos</h3>
+                <p>Dados transmitidos localmente. Nenhum dado financeiro é enviado a um servidor.</p>
+              </div>
+              <button class="icon-button" type="button" data-close aria-label="Fechar sincronização"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </header>
+            <div class="device-sync-content">
+              <p class="field-help">Pareamento direto exige que os dois dispositivos estejam na mesma rede local e que as duas telas permaneçam abertas. O código curto confirma a sessão; o QR contém os dados de conexão temporários.</p>
+              <p id="syncStatus" class="sync-status" role="status" aria-live="polite">Escolha uma forma de transferência.</p>
+              <div class="sync-mode-actions">
+                <button type="button" class="primary-button" id="syncStartOfferButton">Enviar para outro dispositivo</button>
+                <button type="button" class="secondary-button" id="syncOpenReceiverButton">Receber por pareamento</button>
+              </div>
+
+              <section class="sync-panel" id="syncSenderPanel" hidden>
+                <h4>1. Mostre esta oferta no dispositivo que receberá</h4>
+                <div class="sync-qr-wrap"><img id="syncOfferQr" alt="QR Code com a oferta de conexão direta" hidden /></div>
+                <label>Código curto de confirmação
+                  <input id="syncOfferCode" type="text" readonly />
+                </label>
+                <label>Oferta de conexão (copie ou escaneie no outro dispositivo)
+                  <textarea id="syncOfferSignal" rows="4" readonly></textarea>
+                </label>
+                <div class="sync-actions">
+                  <button type="button" class="secondary-button" id="syncCopyOfferButton">Copiar oferta</button>
+                  <button type="button" class="secondary-button" data-scan-target="syncOfferAnswerInput">Escanear resposta</button>
+                </div>
+                <label>2. Cole ou escaneie a resposta gerada pelo outro dispositivo
+                  <textarea id="syncOfferAnswerInput" rows="4" spellcheck="false"></textarea>
+                </label>
+                <button type="button" class="primary-button" id="syncConnectAnswerButton">Conectar e enviar dados</button>
+              </section>
+
+              <section class="sync-panel" id="syncReceiverPanel" hidden>
+                <h4>1. Leia ou cole a oferta do dispositivo de origem</h4>
+                <div class="sync-actions">
+                  <button type="button" class="secondary-button" data-scan-target="syncReceiverOfferInput">Ler QR com a câmera</button>
+                </div>
+                <label>Oferta recebida
+                  <textarea id="syncReceiverOfferInput" rows="4" spellcheck="false"></textarea>
+                </label>
+                <button type="button" class="primary-button" id="syncCreateAnswerButton">Criar resposta</button>
+                <div id="syncAnswerPanel" hidden>
+                  <h4>2. Mostre esta resposta de conexão ao dispositivo de origem</h4>
+                  <div class="sync-qr-wrap"><img id="syncAnswerQr" alt="QR Code com a resposta de conexão direta" hidden /></div>
+                  <label>Código curto — confirme se corresponde à origem
+                    <input id="syncAnswerCode" type="text" readonly />
+                  </label>
+                  <label>Resposta de conexão
+                    <textarea id="syncAnswerSignal" rows="4" readonly></textarea>
+                  </label>
+                  <button type="button" class="secondary-button" id="syncCopyAnswerButton">Copiar resposta</button>
+                </div>
+              </section>
+
+              <section class="sync-panel">
+                <h4>Pacote rápido / offline</h4>
+                <p>Gere um pacote comprimido para transferir por QR quando couber, ou por arquivo único. O pacote permanece no dispositivo até você exportá-lo.</p>
+                <div class="sync-actions">
+                  <button type="button" class="secondary-button" id="syncExportPackageButton">Gerar pacote e QR</button>
+                  <button type="button" class="secondary-button" id="syncDownloadPackageButton" disabled>Baixar arquivo único</button>
+                </div>
+                <div class="sync-qr-wrap"><img id="syncPackageQr" alt="QR Code do pacote offline" hidden /></div>
+                <label>Pacote codificado (também pode ser colado em outro aparelho)
+                  <textarea id="syncPackageOutput" rows="4" readonly></textarea>
+                </label>
+                <label>Importar pacote de sincronização
+                  <textarea id="syncPackageInput" rows="4" placeholder="Cole aqui um pacote LF1... ou use um arquivo"></textarea>
+                </label>
+                <div class="sync-actions">
+                  <button type="button" class="secondary-button" data-scan-target="syncPackageInput">Ler QR do pacote</button>
+                  <button type="button" class="secondary-button" id="syncChoosePackageFileButton">Escolher arquivo</button>
+                  <input type="file" id="syncPackageFile" accept=".lfsync,.txt,.json,application/json,text/plain" hidden />
+                  <button type="button" class="primary-button" id="syncImportPackageButton">Validar pacote</button>
+                </div>
+              </section>
+
+              <section class="sync-panel" id="syncScannerPanel" hidden>
+                <video id="syncScannerVideo" playsinline muted aria-label="Câmera para leitura de QR Code"></video>
+                <p>Posicione o QR Code dentro da imagem. Você também pode colar o código no campo correspondente.</p>
+                <button type="button" class="secondary-button" id="syncStopScannerButton">Parar câmera</button>
+              </section>
+
+              <section class="sync-panel sync-receive-actions" id="syncReceiveActions" hidden>
+                <h4>Pacote validado. Como deseja aplicar?</h4>
+                <p>Uma cópia síncrona do estado atual será salva localmente antes de qualquer alteração.</p>
+                <div class="sync-actions">
+                  <button type="button" class="primary-button" id="syncMergeButton">Mesclar alterações (recomendado)</button>
+                  <button type="button" class="danger-button" id="syncReplaceButton">Substituir tudo</button>
+                </div>
+              </section>
+            </div>
+          </div>
   </div>
 
   <!-- Modal: Add/Edit initial balance -->
@@ -1613,6 +1821,7 @@
         <button class="icon-button" data-close aria-label="Fechar cadastro de cofrinho"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </header>
       <form id="cofferForm">
+        <p class="field-help">Meta, prazo e regras avançadas são opcionais — você pode deixar isso para depois e ajustar quando quiser.</p>
         <div class="preset-suggestions" id="cofferPresetSuggestions" aria-label="Perfis sugeridos de cofrinho">
           <span class="preset-suggestions-title">Perfis sugeridos</span>
           <div class="preset-suggestions-list">
@@ -1626,27 +1835,27 @@
           <label>Nome<input type="text" id="cofferName" maxlength="60" required /></label>
           <label>Ícone<input type="text" id="cofferIcon" maxlength="8" value="💰" /></label>
           <label>Meta opcional (BRL)<input type="number" id="cofferGoal" min="0" step="0.01" /></label>
-          <label>Meta mensal de aporte (BRL)<input type="number" id="cofferMonthlyGoal" min="0" step="0.01" /></label>
-          <label>Depósito automático simulado (BRL)<input type="number" id="cofferAutomaticDeposit" min="0" step="0.01" /></label>
-          <label>Prazo em meses<input type="number" id="cofferTermMonths" min="1" max="600" step="1" /></label>
-          <label>Limite máximo de depósito (BRL)<input type="number" id="cofferDepositLimit" min="0" step="0.01" /></label>
-          <label>Taxa promocional (% do CDI)<input type="number" id="cofferBonusCdi" min="0" max="1000" step="0.01" value="100" /></label>
-          <label>Teto de rendimento bonificado (BRL)<input type="number" id="cofferBonusCap" min="0" step="0.01" /></label>
-          <label>Taxa após o teto (% do CDI)<input type="number" id="cofferExcessCdi" min="0" max="1000" step="0.01" value="100" /></label>
-          <label>Taxa mensal customizada (%)<input type="number" id="cofferMonthlyRate" min="0" max="100" step="0.0001" /></label>
-          <label>Início promocional<input type="date" id="cofferPromoStart" /></label>
-          <label>Fim promocional<input type="date" id="cofferPromoEnd" /></label>
-          <label>Após o prazo promocional
+          <label class="advanced-option">Meta mensal de aporte (BRL)<input type="number" id="cofferMonthlyGoal" min="0" step="0.01" /></label>
+          <label class="advanced-option">Depósito automático simulado (BRL)<input type="number" id="cofferAutomaticDeposit" min="0" step="0.01" /></label>
+          <label class="advanced-option">Prazo em meses<input type="number" id="cofferTermMonths" min="1" max="600" step="1" /></label>
+          <label class="advanced-option">Limite máximo de depósito (BRL)<input type="number" id="cofferDepositLimit" min="0" step="0.01" /></label>
+          <label class="advanced-option">Taxa promocional (% do CDI)<input type="number" id="cofferBonusCdi" min="0" max="1000" step="0.01" value="100" /></label>
+          <label class="advanced-option">Teto de rendimento bonificado (BRL)<input type="number" id="cofferBonusCap" min="0" step="0.01" /></label>
+          <label class="advanced-option">Taxa após o teto (% do CDI)<input type="number" id="cofferExcessCdi" min="0" max="1000" step="0.01" value="100" /></label>
+          <label class="advanced-option">Taxa mensal customizada (%)<input type="number" id="cofferMonthlyRate" min="0" max="100" step="0.0001" /></label>
+          <label class="advanced-option">Início promocional<input type="date" id="cofferPromoStart" /></label>
+          <label class="advanced-option">Fim promocional<input type="date" id="cofferPromoEnd" /></label>
+          <label class="advanced-option">Após o prazo promocional
             <select id="cofferPromoAfter"><option value="standard">Usar taxa padrão</option><option value="excess">Usar taxa excedente</option></select>
           </label>
-          <label>Incidência
+          <label class="advanced-option">Incidência
             <select id="cofferAccrualMode"><option value="business">Dias úteis</option><option value="calendar">Dias corridos</option></select>
           </label>
-          <label>Principal inicial (BRL)<input type="number" id="cofferInitialPrincipal" min="0" step="0.01" value="0" /></label>
-          <label>Rendimento inicial (BRL)<input type="number" id="cofferInitialYield" min="0" step="0.01" value="0" /></label>
-          <label>Ativo<select id="cofferActive"><option value="true">Sim</option><option value="false">Não</option></select></label>
-          <label class="checkbox-label"><input type="checkbox" id="cofferPaymentEnabled" /> Habilitado para pagamentos</label>
-          <label class="checkbox-label"><input type="checkbox" id="cofferAllowWithdrawalWithoutYieldLoss" /> Permite resgate sem perda de rendimento</label>
+          <label class="advanced-option">Principal inicial (BRL)<input type="number" id="cofferInitialPrincipal" min="0" step="0.01" value="0" /></label>
+          <label class="advanced-option">Rendimento inicial (BRL)<input type="number" id="cofferInitialYield" min="0" step="0.01" value="0" /></label>
+          <label class="advanced-option">Ativo<select id="cofferActive"><option value="true">Sim</option><option value="false">Não</option></select></label>
+          <label class="checkbox-label advanced-option"><input type="checkbox" id="cofferPaymentEnabled" /> Habilitado para pagamentos</label>
+          <label class="checkbox-label advanced-option"><input type="checkbox" id="cofferAllowWithdrawalWithoutYieldLoss" /> Permite resgate sem perda de rendimento</label>
         </div>
         <p id="cofferCampaignNotice" class="field-help" aria-live="polite"></p>
         <div class="modal-actions">
@@ -1800,8 +2009,9 @@
 
   <button type="button" class="missions-float-button" id="missionsFloatButton" aria-controls="missionsDrawer" aria-expanded="false">
     <i class="fa-solid fa-route" aria-hidden="true"></i>
-    <span id="missionsFloatLabel">Missões · 0/6</span>
+    <span id="missionsFloatLabel">Missões · 0/9</span>
   </button>
+  <button type="button" class="missions-reopen-button" id="reopenMissionsButton" hidden>Reabrir trilha de missões</button>
   <aside class="missions-drawer" id="missionsDrawer" aria-hidden="true" aria-label="Painel de missões">
     <header class="missions-drawer-header">
       <div>
@@ -1813,8 +2023,8 @@
       </button>
     </header>
     <div class="missions-progress" aria-live="polite">
-      <div><span id="missionsProgressLabel">0 de 6 concluídas</span><strong id="missionsProgressPercent">0%</strong></div>
-      <progress id="missionsProgressBar" max="6" value="0"></progress>
+      <div><span id="missionsProgressLabel">0 de 9 concluídas</span><strong id="missionsProgressPercent">0%</strong></div>
+      <progress id="missionsProgressBar" max="9" value="0"></progress>
     </div>
     <div class="missions-tabs" role="tablist" aria-label="Listas de missões">
       <button type="button" class="active" role="tab" aria-selected="true" data-missions-tab="active">Ativas</button>
